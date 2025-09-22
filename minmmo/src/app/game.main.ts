@@ -11,11 +11,19 @@ subscribe(rebuildFromConfig)
 
 const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 800,
-  height: 480,
   parent: 'game-root',
   backgroundColor: '#0f1220',
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: window.innerWidth,
+    height: window.innerHeight
+  },
   scene: [Overworld, Battle]
 }
 
-new Phaser.Game(gameConfig)
+const game = new Phaser.Game(gameConfig)
+
+window.addEventListener('resize', () => {
+  game.scale.resize(window.innerWidth, window.innerHeight)
+})

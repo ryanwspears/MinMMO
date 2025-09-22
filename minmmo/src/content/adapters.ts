@@ -549,6 +549,58 @@ function toRpn(tokens: Token[], scope: string): Token[] {
   return output;
 }
 
+function isActor(value: unknown): value is Actor {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'stats' in (value as Record<string, unknown>) &&
+      typeof (value as Record<string, unknown>).stats === 'object',
+  );
+}
+
+function resolveActorMetric(actor: Actor, key: string): number | undefined {
+  const { stats } = actor;
+  switch (key) {
+    case 'hpPct':
+      return stats.maxHp > 0 ? stats.hp / stats.maxHp : 0;
+    case 'staPct':
+      return stats.maxSta > 0 ? stats.sta / stats.maxSta : 0;
+    case 'mpPct':
+      return stats.maxMp > 0 ? stats.mp / stats.maxMp : 0;
+    default:
+      return undefined;
+  }
+}
+
+function readProperty(
+  value: unknown,
+  key: string,
+  path: string,
+  scope: string,
+): unknown {
+  if (value == null || typeof value !== 'object') {
+    throw new Error(`Identifier '${path}' is undefined in formula for ${scope}`);
+  }
+
+  const record = value as Record<string, unknown>;
+  if (key in record) {
+    return record[key];
+  }
+
+  if (isActor(value)) {
+    const stats = value.stats as Record<string, unknown>;
+    if (key in stats) {
+      return stats[key];
+    }
+    const derived = resolveActorMetric(value, key);
+    if (typeof derived === 'number') {
+      return derived;
+    }
+  }
+
+  throw new Error(`Identifier '${path}' is undefined in formula for ${scope}`);
+}
+
 function resolveIdentifier(
   path: string,
   user: Actor,
@@ -561,12 +613,12 @@ function resolveIdentifier(
   if (parts.length === 0) {
     throw new Error(`Empty identifier in formula for ${scope}`);
   }
+  if (!(parts[0] in root)) {
+    throw new Error(`Identifier '${path}' is undefined in formula for ${scope}`);
+  }
   let value: unknown = root[parts[0]];
   for (let i = 1; i < parts.length; i += 1) {
-    if (value == null || typeof value !== 'object') {
-      throw new Error(`Identifier '${path}' is undefined in formula for ${scope}`);
-    }
-    value = (value as Record<string, unknown>)[parts[i]];
+    value = readProperty(value, parts[i], path, scope);
   }
   if (typeof value === 'number') {
     return value;
