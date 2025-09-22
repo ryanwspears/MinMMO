@@ -405,7 +405,10 @@ function applyDamage(
     return 0
   }
 
-  let pending = Math.max(0, amount)
+  const elementKey = options.element ?? 'neutral'
+  const dealtMult = modifierMultiplier(user.statusModifiers?.damageDealtPct, [elementKey, 'damage'])
+  const takenMult = modifierMultiplier(target.statusModifiers?.damageTakenPct, [elementKey, 'damage'])
+  let pending = Math.max(0, amount * dealtMult * takenMult)
   const shieldResult = absorbDamageWithShields(state, target, pending, options.element)
   for (const log of shieldResult.logs) {
     pushLog(state, log)
@@ -440,7 +443,10 @@ function applyDamage(
 }
 
 function applyHeal(state: BattleState, user: Actor, target: Actor, amount: number) {
-  const heal = Math.max(0, amount)
+  const healMult =
+    modifierMultiplier(user.statusModifiers?.damageDealtPct, ['heal']) *
+    modifierMultiplier(target.statusModifiers?.damageTakenPct, ['heal'])
+  const heal = Math.max(0, amount) * healMult
   const before = target.stats.hp
   const after = Math.min(target.stats.maxHp, before + heal)
   target.stats.hp = after
@@ -458,10 +464,15 @@ function applyResource(
   amount: number,
   resource: Resource,
 ) {
+  const categories = ['resource', `resource:${resource}`]
+  const scaledAmount =
+    amount *
+    modifierMultiplier(user.statusModifiers?.damageDealtPct, categories) *
+    modifierMultiplier(target.statusModifiers?.damageTakenPct, categories)
   const [currentKey, maxKey] = resourceKeys(resource)
   const before = target.stats[currentKey]
   const max = target.stats[maxKey]
-  const after = clamp(before + amount, 0, max)
+  const after = clamp(before + scaledAmount, 0, max)
   target.stats[currentKey] = after
   const diff = after - before
   const label = resource.toUpperCase()
@@ -472,6 +483,30 @@ function applyResource(
   } else {
     pushLog(state, `${user.name} drained ${Math.round(Math.abs(diff))} ${label} from ${target.name}.`)
   }
+}
+
+function modifierMultiplier(
+  map: Record<string, number> | undefined,
+  categories: (string | undefined)[],
+): number {
+  if (!map) {
+    return 1
+  }
+  const keys: string[] = ['all', ...categories]
+  let total = 0
+  const seen = new Set<string>()
+  for (const key of keys) {
+    if (!key || seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    const value = map[key]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      total += value
+    }
+  }
+  const result = 1 + total
+  return result < 0 ? 0 : result
 }
 
 function modifyStat(

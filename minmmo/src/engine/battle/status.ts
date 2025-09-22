@@ -6,7 +6,13 @@ import type {
 } from '@content/adapters'
 import { Statuses } from '@content/registry'
 import { elementMult, tagResistMult } from './rules'
-import type { Actor, BattleState, Status } from './types'
+import type {
+  Actor,
+  ActorStatusModifierCache,
+  BattleState,
+  Status,
+  StatusModifierSnapshot,
+} from './types'
 
 export interface StatusApplyOptions {
   stacks?: number
@@ -361,6 +367,7 @@ function expireStatus(
   template: RuntimeStatusTemplate,
   entry: ActiveStatus,
 ) {
+  removeStatusModifierSnapshot(actor, entry)
   clearStatusShield(state, actor, template)
   runHookForEntry(state, actor, template, entry, 'onExpire', {
     other: resolveSourceActor(state, entry.sourceId) ?? actor,
@@ -380,6 +387,8 @@ function syncStatusModifiers(
   } else if (template.modifiers?.shield === null) {
     clearStatusShield(state, actor, template)
   }
+
+  applyStatusModifierSnapshot(actor, entry, template)
 }
 
 function clearStatusShield(
@@ -393,6 +402,159 @@ function clearStatusShield(
     return
   }
   delete map[shieldId]
+}
+
+function applyStatusModifierSnapshot(actor: Actor, entry: ActiveStatus, template: RuntimeStatusTemplate) {
+  const next = createSnapshotFromTemplate(template, entry)
+  const prev = entry.appliedModifiers
+  if (!prev && !next) {
+    return
+  }
+
+  updateActorFromSnapshot(actor, prev, next)
+  entry.appliedModifiers = next
+}
+
+function removeStatusModifierSnapshot(actor: Actor, entry: ActiveStatus) {
+  if (!entry.appliedModifiers) {
+    return
+  }
+  updateActorFromSnapshot(actor, entry.appliedModifiers, undefined)
+  entry.appliedModifiers = undefined
+}
+
+function createSnapshotFromTemplate(template: RuntimeStatusTemplate, entry: ActiveStatus):
+  | StatusModifierSnapshot
+  | undefined {
+  const modifiers = template.modifiers
+  if (!modifiers) {
+    return undefined
+  }
+
+  const stacks = Math.max(1, Number.isFinite(entry.stacks) ? entry.stacks : 1)
+  const snapshot: StatusModifierSnapshot = {}
+
+  if (Number.isFinite(modifiers.atk)) {
+    snapshot.atk = (modifiers.atk ?? 0) * stacks
+  }
+  if (Number.isFinite(modifiers.def)) {
+    snapshot.def = (modifiers.def ?? 0) * stacks
+  }
+
+  if (modifiers.damageTakenPct) {
+    snapshot.damageTakenPct = scaleRecord(modifiers.damageTakenPct, stacks)
+  }
+  if (modifiers.damageDealtPct) {
+    snapshot.damageDealtPct = scaleRecord(modifiers.damageDealtPct, stacks)
+  }
+  if (modifiers.resourceRegenPerTurn) {
+    snapshot.resourceRegenPerTurn = scaleRecord(modifiers.resourceRegenPerTurn, stacks)
+  }
+  if (Number.isFinite(modifiers.dodgeBonus)) {
+    snapshot.dodgeBonus = (modifiers.dodgeBonus ?? 0) * stacks
+  }
+  if (Number.isFinite(modifiers.critChanceBonus)) {
+    snapshot.critChanceBonus = (modifiers.critChanceBonus ?? 0) * stacks
+  }
+
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined
+}
+
+function scaleRecord(record: Record<string, number | undefined>, factor: number): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const [key, value] of Object.entries(record)) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric !== 0) {
+      result[key] = numeric * factor
+    }
+  }
+  return result
+}
+
+function updateActorFromSnapshot(
+  actor: Actor,
+  previous: StatusModifierSnapshot | undefined,
+  next: StatusModifierSnapshot | undefined,
+) {
+  const cache = ensureModifierCache(actor)
+
+  applyStatDelta(actor, 'atk', previous?.atk ?? 0, next?.atk ?? 0)
+  applyStatDelta(actor, 'def', previous?.def ?? 0, next?.def ?? 0)
+
+  applyRecordDelta(cache.damageTakenPct, previous?.damageTakenPct, next?.damageTakenPct)
+  applyRecordDelta(cache.damageDealtPct, previous?.damageDealtPct, next?.damageDealtPct)
+  applyRecordDelta(
+    cache.resourceRegenPerTurn as Record<string, number>,
+    previous?.resourceRegenPerTurn,
+    next?.resourceRegenPerTurn,
+  )
+
+  cache.dodgeBonus += (next?.dodgeBonus ?? 0) - (previous?.dodgeBonus ?? 0)
+  cache.critChanceBonus += (next?.critChanceBonus ?? 0) - (previous?.critChanceBonus ?? 0)
+}
+
+function ensureModifierCache(actor: Actor): ActorStatusModifierCache {
+  if (!actor.statusModifiers) {
+    actor.statusModifiers = {
+      damageTakenPct: {},
+      damageDealtPct: {},
+      resourceRegenPerTurn: {},
+      dodgeBonus: 0,
+      critChanceBonus: 0,
+    }
+  }
+  return actor.statusModifiers
+}
+
+function applyStatDelta(actor: Actor, stat: 'atk' | 'def', previous: number, next: number) {
+  const delta = next - previous
+  if (delta === 0) {
+    return
+  }
+  const value = Math.max(0, (actor.stats[stat] ?? 0) + delta)
+  actor.stats[stat] = value
+}
+
+function applyRecordDelta(
+  cache: Record<string, number>,
+  previous?: Record<string, number>,
+  next?: Record<string, number>,
+) {
+  if (previous) {
+    for (const [key, value] of Object.entries(previous)) {
+      adjustCacheValue(cache, key, -value)
+    }
+  }
+  if (next) {
+    for (const [key, value] of Object.entries(next)) {
+      adjustCacheValue(cache, key, value)
+    }
+  }
+}
+
+function adjustCacheValue(cache: Record<string, number>, key: string, delta: number) {
+  const current = cache[key] ?? 0
+  const next = current + delta
+  if (Math.abs(next) < 1e-8) {
+    delete cache[key]
+  } else {
+    cache[key] = next
+  }
+}
+
+function cloneSnapshot(snapshot: StatusModifierSnapshot | undefined): StatusModifierSnapshot | undefined {
+  if (!snapshot) {
+    return undefined
+  }
+  const copy: StatusModifierSnapshot = {}
+  if (snapshot.atk != null) copy.atk = snapshot.atk
+  if (snapshot.def != null) copy.def = snapshot.def
+  if (snapshot.damageTakenPct) copy.damageTakenPct = { ...snapshot.damageTakenPct }
+  if (snapshot.damageDealtPct) copy.damageDealtPct = { ...snapshot.damageDealtPct }
+  if (snapshot.resourceRegenPerTurn) copy.resourceRegenPerTurn = { ...snapshot.resourceRegenPerTurn }
+  if (snapshot.dodgeBonus != null) copy.dodgeBonus = snapshot.dodgeBonus
+  if (snapshot.critChanceBonus != null) copy.critChanceBonus = snapshot.critChanceBonus
+  return copy
 }
 
 function resolveEffectValue(
@@ -455,7 +617,7 @@ function applyHookEffect(
     case 'damage': {
       const element = effect.element ?? template.modifiers?.shield?.element
       const finalAmount = amount * elementMult(element, target) * tagResistMult(target)
-      applyStatusDamage(state, template, target, finalAmount)
+      applyStatusDamage(state, template, target, finalAmount, element)
       break
     }
     case 'heal':
@@ -471,11 +633,19 @@ function applyHookEffect(
   }
 }
 
-function applyStatusDamage(state: BattleState, template: RuntimeStatusTemplate, target: Actor, amount: number) {
+function applyStatusDamage(
+  state: BattleState,
+  template: RuntimeStatusTemplate,
+  target: Actor,
+  amount: number,
+  element?: string,
+) {
   if (!target.alive) {
     return
   }
-  const dmg = Math.max(0, amount)
+  const elementKey = element ?? 'neutral'
+  const dmgMult = modifierMultiplier(target.statusModifiers?.damageTakenPct, [elementKey, 'damage'])
+  const dmg = Math.max(0, amount * dmgMult)
   if (dmg <= 0) {
     return
   }
@@ -496,7 +666,8 @@ function applyStatusDamage(state: BattleState, template: RuntimeStatusTemplate, 
 }
 
 function applyStatusHeal(state: BattleState, template: RuntimeStatusTemplate, target: Actor, amount: number) {
-  const heal = Math.max(0, amount)
+  const healMult = modifierMultiplier(target.statusModifiers?.damageTakenPct, ['heal'])
+  const heal = Math.max(0, amount) * healMult
   if (heal <= 0) {
     return
   }
@@ -518,10 +689,12 @@ function applyStatusResource(
   amount: number,
   resource: 'hp' | 'sta' | 'mp',
 ) {
+  const categories = ['resource', `resource:${resource}`]
+  const scaledAmount = amount * modifierMultiplier(target.statusModifiers?.damageTakenPct, categories)
   const [currentKey, maxKey] = resourceKeys(resource)
   const before = target.stats[currentKey]
   const max = target.stats[maxKey]
-  const after = clamp(before + amount, 0, max)
+  const after = clamp(before + scaledAmount, 0, max)
   target.stats[currentKey] = after
   const diff = after - before
   const label = template.name ?? template.id
@@ -532,6 +705,30 @@ function applyStatusResource(
   } else {
     pushLog(state, `${target.name} loses ${Math.round(Math.abs(diff))} ${resource.toUpperCase()} from ${label}.`)
   }
+}
+
+function modifierMultiplier(
+  map: Record<string, number> | undefined,
+  categories: (string | undefined)[],
+): number {
+  if (!map) {
+    return 1
+  }
+  const keys: string[] = ['all', ...categories]
+  let total = 0
+  const seen = new Set<string>()
+  for (const key of keys) {
+    if (!key || seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    const value = map[key]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      total += value
+    }
+  }
+  const result = 1 + total
+  return result < 0 ? 0 : result
 }
 
 function resolveDuration(turns: number, template: RuntimeStatusTemplate): number {
@@ -555,6 +752,7 @@ function ensureStatuses(actor: Actor): ActiveStatus[] {
     turns: entry.turns,
     stacks: Math.max(1, entry.stacks ?? 1),
     sourceId: (entry as ActiveStatus).sourceId,
+    appliedModifiers: cloneSnapshot((entry as ActiveStatus).appliedModifiers),
   }))
   return actor.statuses as ActiveStatus[]
 }
