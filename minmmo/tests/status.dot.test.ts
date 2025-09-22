@@ -209,5 +209,129 @@ describe('status engine - damage over time', () => {
     applyStatus(state, actor.id, 'poison', 3)
     expect(actor.statuses[0]?.stacks).toBe(3)
   })
+
+  it('applies selector-based hook effects to all resolved allies', () => {
+    registryMap.aura = statusTemplate({
+      id: 'aura',
+      durationTurns: 2,
+      hooks: {
+        onApply: [],
+        onTurnStart: [],
+        onTurnEnd: [
+          {
+            kind: 'heal',
+            value: {
+              kind: 'flat',
+              resolve: () => 5,
+              rawAmount: 5,
+            },
+            selector: {
+              side: 'ally',
+              mode: 'all',
+              includeDead: true,
+              count: 0,
+            },
+            canCrit: false,
+            canMiss: false,
+          } as RuntimeEffect,
+        ],
+        onDealDamage: [],
+        onTakeDamage: [],
+        onExpire: [],
+      },
+    })
+
+    const leader = makeActor('P1', { hp: 10, maxHp: 40 })
+    const ally = makeActor('P2', { hp: 6, maxHp: 30 })
+    const fallen = makeActor('P3', { hp: 0, maxHp: 25 })
+    fallen.alive = false
+    fallen.stats.hp = 0
+
+    const state = createState({
+      rngSeed: 42,
+      actors: {
+        [leader.id]: leader,
+        [ally.id]: ally,
+        [fallen.id]: fallen,
+      },
+      sidePlayer: [leader.id, ally.id, fallen.id],
+      sideEnemy: [],
+      inventory: [],
+    })
+
+    applyStatus(state, leader.id, 'aura', 2, { sourceId: leader.id })
+
+    tickEndOfTurn(state, leader.id)
+
+    expect(leader.stats.hp).toBe(15)
+    expect(ally.stats.hp).toBe(11)
+    expect(fallen.alive).toBe(true)
+    expect(fallen.stats.hp).toBe(5)
+  })
+
+  it('skips hook targets that fail onlyIf conditions', () => {
+    registryMap.recovery = statusTemplate({
+      id: 'recovery',
+      durationTurns: 2,
+      hooks: {
+        onApply: [],
+        onTurnStart: [],
+        onTurnEnd: [
+          {
+            kind: 'heal',
+            value: {
+              kind: 'flat',
+              resolve: () => 50,
+              rawAmount: 50,
+            },
+            selector: {
+              side: 'ally',
+              mode: 'all',
+              includeDead: false,
+              count: 0,
+            },
+            onlyIf: {
+              test: { key: 'hpPct', op: 'lt', value: 1 },
+            },
+            canCrit: false,
+            canMiss: false,
+          } as RuntimeEffect,
+        ],
+        onDealDamage: [],
+        onTakeDamage: [],
+        onExpire: [],
+      },
+    })
+
+    const owner = makeActor('P10', { hp: 10, maxHp: 40 })
+    const injured = makeActor('P11', { hp: 5, maxHp: 30 })
+    const healthy = makeActor('P12', { hp: 50, maxHp: 50 })
+
+    const state = createState({
+      rngSeed: 99,
+      actors: {
+        [owner.id]: owner,
+        [injured.id]: injured,
+        [healthy.id]: healthy,
+      },
+      sidePlayer: [owner.id, injured.id, healthy.id],
+      sideEnemy: [],
+      inventory: [],
+    })
+
+    applyStatus(state, owner.id, 'recovery', 2, { sourceId: owner.id })
+
+    tickEndOfTurn(state, owner.id)
+
+    expect(owner.stats.hp).toBe(40)
+    expect(injured.stats.hp).toBe(30)
+    expect(healthy.stats.hp).toBe(50)
+
+    tickEndOfTurn(state, owner.id)
+
+    expect(owner.stats.hp).toBe(40)
+    expect(injured.stats.hp).toBe(30)
+    expect(healthy.stats.hp).toBe(50)
+  })
 })
 

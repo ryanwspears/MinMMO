@@ -7,10 +7,10 @@ import type {
   RuntimeTargetSelector,
   ValueResolver,
 } from '@content/adapters'
-import type { ConditionOp, Filter, Resource } from '@config/schema'
+import type { Resource } from '@config/schema'
 import { CONFIG } from '@config/store'
 
-import { resolveTargets } from './targeting'
+import { resolveTargets, matchesFilter } from './targeting'
 import { critChance, elementMult, hitChance, tagResistMult, type RuleContext } from './rules'
 import {
   absorbDamageWithShields,
@@ -615,118 +615,6 @@ function evaluateOutcome(state: BattleState) {
     state.ended = { reason: 'defeat' }
     pushLog(state, 'Defeat...')
   }
-}
-
-function matchesFilter(actor: Actor, filter: Filter): boolean {
-  if (filter.all && !filter.all.every((inner) => matchesFilter(actor, inner))) {
-    return false
-  }
-  if (filter.any && !filter.any.some((inner) => matchesFilter(actor, inner))) {
-    return false
-  }
-  if (filter.not && matchesFilter(actor, filter.not)) {
-    return false
-  }
-  if (!filter.test) {
-    return true
-  }
-  const { key, op, value } = filter.test
-  switch (key) {
-    case 'hpPct':
-      return compareNumeric(fraction(actor.stats.hp, actor.stats.maxHp), op, value)
-    case 'staPct':
-      return compareNumeric(fraction(actor.stats.sta, actor.stats.maxSta), op, value)
-    case 'mpPct':
-      return compareNumeric(fraction(actor.stats.mp, actor.stats.maxMp), op, value)
-    case 'atk':
-      return compareNumeric(actor.stats.atk, op, value)
-    case 'def':
-      return compareNumeric(actor.stats.def, op, value)
-    case 'lv':
-      return compareNumeric(actor.stats.lv, op, value)
-    case 'hasStatus':
-      return compareSet(actor.statuses.map((entry) => entry.id), op, value)
-    case 'tag':
-      return compareSet(actor.tags ?? [], op, value)
-    case 'clazz':
-      return compareValue(actor.clazz ?? null, op, value)
-    default:
-      return false
-  }
-}
-
-function compareNumeric(actual: number, op: ConditionOp, expected: unknown): boolean {
-  if (op === 'in' || op === 'notIn') {
-    const values = Array.isArray(expected) ? expected : [expected]
-    const parsed = values
-      .map((value) => (typeof value === 'number' ? value : Number(value)))
-      .filter((num) => Number.isFinite(num))
-    const has = parsed.some((num) => num === actual)
-    return op === 'in' ? has : !has
-  }
-
-  const expectedNumber = typeof expected === 'number' ? expected : Number(expected)
-  if (!Number.isFinite(expectedNumber)) {
-    return false
-  }
-
-  switch (op) {
-    case 'lt':
-      return actual < expectedNumber
-    case 'lte':
-      return actual <= expectedNumber
-    case 'eq':
-      return actual === expectedNumber
-    case 'gte':
-      return actual >= expectedNumber
-    case 'gt':
-      return actual > expectedNumber
-    case 'ne':
-      return actual !== expectedNumber
-    default:
-      return false
-  }
-}
-
-function compareValue(actual: unknown, op: ConditionOp, expected: unknown): boolean {
-  if (op === 'in' || op === 'notIn') {
-    const values = Array.isArray(expected) ? expected : [expected]
-    const has = values.some((entry) => entry === actual)
-    return op === 'in' ? has : !has
-  }
-  switch (op) {
-    case 'eq':
-      return actual === expected
-    case 'ne':
-      return actual !== expected
-    default:
-      return false
-  }
-}
-
-function compareSet(actual: string[], op: ConditionOp, expected: unknown): boolean {
-  const values = Array.isArray(expected) ? expected : [expected]
-  const hasAny = values.some((entry) => actual.includes(entry))
-  if (op === 'in') {
-    return hasAny
-  }
-  if (op === 'notIn') {
-    return !hasAny
-  }
-  if (op === 'eq') {
-    return hasAny
-  }
-  if (op === 'ne') {
-    return !hasAny
-  }
-  return false
-}
-
-function fraction(value: number, max: number): number {
-  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
-    return 0
-  }
-  return value / max
 }
 
 function collectItemCosts(action: RuntimeAction): ItemCost[] {
