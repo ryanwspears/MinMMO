@@ -45,6 +45,11 @@ export class Overworld extends Phaser.Scene {
     this.profile = getProfile();
     this.world = getWorld();
     this.summaryLines = data?.summary ?? [];
+    this.cameras.resize(this.scale.width, this.scale.height);
+    this.scale.on('resize', this.handleResize, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.handleResize, this);
+    });
     this.render();
   }
 
@@ -56,6 +61,7 @@ export class Overworld extends Phaser.Scene {
   private render() {
     this.clearUi();
     const config = CONFIG();
+    const wrapWidth = Math.max(280, this.scale.width - 40);
     let y = 20;
     this.ui.push(this.add.text(20, y, 'MinMMO — Overworld', { color: TEXT_COLOR, fontSize: '20px' }));
     y += 28;
@@ -63,7 +69,7 @@ export class Overworld extends Phaser.Scene {
     if (this.summaryLines.length) {
       this.ui.push(
         this.add
-          .text(20, y, this.summaryLines.join('\n'), { color: ACCENT_COLOR, wordWrap: { width: 760 } })
+          .text(20, y, this.summaryLines.join('\n'), { color: ACCENT_COLOR, wordWrap: { width: wrapWidth } })
           .setDepth(1),
       );
       y += 20 * this.summaryLines.length + 10;
@@ -192,6 +198,13 @@ export class Overworld extends Phaser.Scene {
       this.summaryLines = ['Save reset.'];
       this.render();
     });
+  }
+
+  private handleResize(gameSize: Phaser.Structs.Size) {
+    const width = Math.max(1, gameSize.width ?? this.scale.width);
+    const height = Math.max(1, gameSize.height ?? this.scale.height);
+    this.cameras.resize(width, height);
+    this.render();
   }
 
   private toggleSkillEquip(skillId: string, slots: number) {

@@ -588,9 +588,9 @@ function readProperty(
   }
 
   if (isActor(value)) {
-    const stats = value.stats as Record<string, unknown>;
-    if (key in stats) {
-      return stats[key];
+    const stats = value.stats as unknown;
+    if (stats && typeof stats === 'object' && key in (stats as Record<string, unknown>)) {
+      return (stats as Record<string, unknown>)[key];
     }
     const derived = resolveActorMetric(value, key);
     if (typeof derived === 'number') {

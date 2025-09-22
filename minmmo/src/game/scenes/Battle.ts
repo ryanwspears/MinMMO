@@ -4,6 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn } from '@engine/battle/actions';
+import { resolveTargets } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
   PlayerProfile,
@@ -29,6 +30,15 @@ const PLAYER_ID = 'player';
 const BAR_WIDTH = 200;
 const BAR_HEIGHT = 12;
 
+interface LayoutMetrics {
+  rightColumnX: number;
+  logWidth: number;
+  logY: number;
+  endTurnX: number;
+  endTurnY: number;
+  targetX: number;
+}
+
 export class Battle extends Phaser.Scene {
   private profile!: PlayerProfile;
   private world!: WorldState;
@@ -44,6 +54,7 @@ export class Battle extends Phaser.Scene {
   private targetPrompt?: Phaser.GameObjects.Text;
   private targetButtons: TargetButton[] = [];
   private outcomeHandled = false;
+  private layout?: LayoutMetrics;
 
   constructor() {
     super('Battle');
@@ -69,12 +80,23 @@ export class Battle extends Phaser.Scene {
       inventory: this.profile.inventory.map((entry) => ({ id: entry.id, qty: entry.qty })),
     });
 
+    this.cameras.resize(this.scale.width, this.scale.height);
+    this.layout = this.computeLayout();
     this.barGraphics = this.add.graphics();
-    this.logText = this.add.text(20, 260, '', { color: '#8b8fa3', wordWrap: { width: 760 } });
+    this.logText = this.add.text(20, this.layout.logY, '', {
+      color: '#8b8fa3',
+      wordWrap: { width: this.layout.logWidth },
+    });
 
     this.buildStaticUi();
+    this.layoutUi();
     this.renderActions();
     this.renderState();
+
+    this.scale.on('resize', this.handleResize, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.handleResize, this);
+    });
   }
 
   private buildStaticUi() {
@@ -87,20 +109,28 @@ export class Battle extends Phaser.Scene {
     this.actorLabels[this.playerId] = playerText;
     this.statusLabels[this.playerId] = playerStatus;
 
+    const layout = this.layout ?? this.computeLayout();
+
     for (let i = 0; i < enemyCount; i += 1) {
       const actorId = this.state.sideEnemy[i];
       const baseY = 60 + i * 80;
-      this.actorLabels[actorId] = this.add.text(420, baseY, '', { color: '#f5c6a5' });
-      this.statusLabels[actorId] = this.add.text(420, baseY + 24, '', { color: '#7c5cff', wordWrap: { width: 340 } });
+      this.actorLabels[actorId] = this.add.text(layout.rightColumnX, baseY, '', { color: '#f5c6a5' });
+      this.statusLabels[actorId] = this.add.text(layout.rightColumnX, baseY + 24, '', {
+        color: '#7c5cff',
+        wordWrap: { width: Math.max(220, layout.logWidth / 2) },
+      });
     }
 
     this.endTurnButton = this.add
-      .text(650, 420, '[End Turn]', { color: '#7c5cff' })
+      .text(layout.endTurnX, layout.endTurnY, '[End Turn]', { color: '#7c5cff' })
       .setInteractive({ useHandCursor: true });
     this.endTurnButton.on('pointerdown', () => {
       if (this.state.ended) return;
       endTurn(this.state);
       this.afterAction();
+      if (!this.state.ended) {
+        this.processEnemyTurns();
+      }
     });
   }
 
@@ -145,12 +175,12 @@ export class Battle extends Phaser.Scene {
     if (this.needsManualTarget(selector)) {
       const targets = this.collectTargets(selector, this.playerId);
       this.promptForTarget(targets, (targetId) => {
-        useSkill(this.state, skill, this.playerId, [targetId]);
-        this.afterAction();
+        const result = useSkill(this.state, skill, this.playerId, [targetId]);
+        this.afterAction({ autoAdvance: result.ok });
       });
     } else {
-      useSkill(this.state, skill, this.playerId);
-      this.afterAction();
+      const result = useSkill(this.state, skill, this.playerId);
+      this.afterAction({ autoAdvance: result.ok });
     }
   }
 
@@ -160,12 +190,12 @@ export class Battle extends Phaser.Scene {
     if (this.needsManualTarget(selector)) {
       const targets = this.collectTargets(selector, this.playerId);
       this.promptForTarget(targets, (targetId) => {
-        useItem(this.state, item, this.playerId, [targetId]);
-        this.afterAction();
+        const result = useItem(this.state, item, this.playerId, [targetId]);
+        this.afterAction({ autoAdvance: result.ok });
       });
     } else {
-      useItem(this.state, item, this.playerId);
-      this.afterAction();
+      const result = useItem(this.state, item, this.playerId);
+      this.afterAction({ autoAdvance: result.ok });
     }
   }
 
@@ -206,13 +236,16 @@ export class Battle extends Phaser.Scene {
       onPick(this.playerId);
       return;
     }
-    this.targetPrompt = this.add.text(420, 300, 'Choose target:', { color: '#e6e8ef' });
+    const layout = this.layout ?? this.computeLayout();
+    this.targetPrompt = this.add.text(layout.targetX, 300, 'Choose target:', { color: '#e6e8ef' });
     let y = 330;
     for (const id of candidates) {
       const actor = this.state.actors[id];
       if (!actor) continue;
       const text = this.add
-        .text(420, y, `${actor.name} (${Math.max(0, actor.stats.hp)}/${actor.stats.maxHp})`, { color: '#7c5cff' })
+        .text(layout.targetX, y, `${actor.name} (${Math.max(0, actor.stats.hp)}/${actor.stats.maxHp})`, {
+          color: '#7c5cff',
+        })
         .setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
         this.clearTargetPicker();
@@ -221,7 +254,9 @@ export class Battle extends Phaser.Scene {
       this.targetButtons.push({ actorId: id, text });
       y += 22;
     }
-    const cancel = this.add.text(420, y + 10, '[Cancel]', { color: '#8b8fa3' }).setInteractive({ useHandCursor: true });
+    const cancel = this.add
+      .text(layout.targetX, y + 10, '[Cancel]', { color: '#8b8fa3' })
+      .setInteractive({ useHandCursor: true });
     cancel.on('pointerdown', () => {
       this.clearTargetPicker();
     });
@@ -237,11 +272,178 @@ export class Battle extends Phaser.Scene {
     this.targetButtons = [];
   }
 
-  private afterAction() {
+  private handleResize(gameSize: Phaser.Structs.Size) {
+    const width = Math.max(1, gameSize.width ?? this.scale.width);
+    const height = Math.max(1, gameSize.height ?? this.scale.height);
+    this.cameras.resize(width, height);
+    this.layoutUi();
+    this.renderState();
+  }
+
+  private computeLayout(width = this.scale.width, height = this.scale.height): LayoutMetrics {
+    const safeWidth = Math.max(360, width);
+    const safeHeight = Math.max(320, height);
+    const rightColumnX = Math.max(360, safeWidth - (BAR_WIDTH + 60));
+    const logWidth = Math.max(280, safeWidth - 40);
+    const logY = Math.max(260, safeHeight - 200);
+    const endTurnY = Math.max(80, Math.min(safeHeight - 40, logY + 120));
+    const endTurnX = Math.max(20, safeWidth - 140);
+    return {
+      rightColumnX,
+      logWidth,
+      logY,
+      endTurnX,
+      endTurnY,
+      targetX: rightColumnX,
+    };
+  }
+
+  private layoutUi() {
+    this.layout = this.computeLayout();
+    const layout = this.layout;
+    if (!layout) return;
+    this.logText.setPosition(20, layout.logY);
+    this.logText.setWordWrapWidth(layout.logWidth);
+    if (this.endTurnButton) {
+      this.endTurnButton.setPosition(layout.endTurnX, layout.endTurnY);
+    }
+    const playerStatus = this.statusLabels[this.playerId];
+    if (playerStatus) {
+      playerStatus.setWordWrapWidth(Math.max(220, layout.logWidth / 2));
+    }
+    for (const enemyId of this.state.sideEnemy) {
+      const label = this.actorLabels[enemyId];
+      const status = this.statusLabels[enemyId];
+      if (label) {
+        label.setX(layout.rightColumnX);
+      }
+      if (status) {
+        status.setX(layout.rightColumnX);
+        status.setWordWrapWidth(Math.max(220, layout.logWidth / 2));
+      }
+    }
+    if (this.targetPrompt) {
+      this.targetPrompt.setX(layout.targetX);
+    }
+    for (const entry of this.targetButtons) {
+      entry.text.setX(layout.targetX);
+    }
+  }
+
+  private afterAction(options: { autoAdvance?: boolean } = {}) {
     clampInventory(this.state.inventory);
     this.renderActions();
     this.renderState();
+    this.layoutUi();
+    if (this.state.ended) {
+      this.checkOutcome();
+      return;
+    }
+    if (options.autoAdvance) {
+      this.advanceTurnAfterPlayer();
+    } else {
+      this.checkOutcome();
+    }
+  }
+
+  private advanceTurnAfterPlayer() {
+    endTurn(this.state);
+    clampInventory(this.state.inventory);
+    this.renderState();
+    this.layoutUi();
     this.checkOutcome();
+    if (this.state.ended) {
+      return;
+    }
+    this.processEnemyTurns();
+  }
+
+  private processEnemyTurns() {
+    let guard = 0;
+    while (!this.state.ended && guard < 100) {
+      guard += 1;
+      const actorId = this.state.order[this.state.current];
+      if (!actorId) {
+        endTurn(this.state);
+        continue;
+      }
+      const actor = this.state.actors[actorId];
+      if (!actor || !actor.alive) {
+        endTurn(this.state);
+        continue;
+      }
+      const isEnemy = this.state.sideEnemy.includes(actorId);
+      if (!isEnemy) {
+        break;
+      }
+
+      this.executeEnemyTurn(actor);
+      clampInventory(this.state.inventory);
+      this.renderState();
+      this.layoutUi();
+      this.checkOutcome();
+      if (this.state.ended) {
+        return;
+      }
+      endTurn(this.state);
+    }
+
+    if (this.state.ended) {
+      this.checkOutcome();
+      return;
+    }
+
+    this.renderActions();
+    this.renderState();
+    this.layoutUi();
+    this.checkOutcome();
+  }
+
+  private executeEnemyTurn(actor: Actor) {
+    const skills = actor.meta?.skillIds ?? [];
+    const skillMap = Skills();
+    let chosen: RuntimeSkill | undefined;
+    let bestWeight = -Infinity;
+    for (const id of skills) {
+      const skill = skillMap[id];
+      if (!skill) continue;
+      if (!this.canEnemyUseSkill(actor, skill)) {
+        continue;
+      }
+      const weight = typeof skill.aiWeight === 'number' ? skill.aiWeight : 1;
+      if (!chosen || weight > bestWeight) {
+        chosen = skill;
+        bestWeight = weight;
+      }
+    }
+
+    if (chosen) {
+      useSkill(this.state, chosen, actor.id);
+      return;
+    }
+
+    this.state.log.push(`${actor.name} waits cautiously.`);
+  }
+
+  private canEnemyUseSkill(actor: Actor, skill: RuntimeSkill): boolean {
+    if (actor.stats.sta < (skill.costs?.sta ?? 0)) {
+      return false;
+    }
+    if (actor.stats.mp < (skill.costs?.mp ?? 0)) {
+      return false;
+    }
+    const cooldown = this.state.cooldowns[actor.id]?.[skill.id];
+    if (cooldown && cooldown > 0) {
+      return false;
+    }
+    const charge = this.state.charges[actor.id]?.[skill.id];
+    if (skill.costs?.charges != null && charge && charge.remaining <= 0) {
+      return false;
+    }
+    const prevSeed = this.state.rngSeed;
+    const targets = resolveTargets(this.state, skill.targeting, actor.id);
+    this.state.rngSeed = prevSeed;
+    return targets.length > 0;
   }
 
   private renderState() {
@@ -250,12 +452,14 @@ export class Battle extends Phaser.Scene {
     if (player) {
       this.updateActorPanel(player, 20, 120);
     }
+    const layout = this.computeLayout();
+    this.layout = layout;
     for (let i = 0; i < this.state.sideEnemy.length; i += 1) {
       const enemyId = this.state.sideEnemy[i];
       const actor = this.state.actors[enemyId];
       if (actor) {
         const baseY = 120 + i * 80;
-        this.updateActorPanel(actor, 420, baseY);
+        this.updateActorPanel(actor, layout.rightColumnX, baseY);
       }
     }
     const recent = this.state.log.slice(-7);
