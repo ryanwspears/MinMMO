@@ -61,6 +61,7 @@ export class Battle extends Phaser.Scene {
   }
 
   create(data: BattleInitData) {
+    this.outcomeHandled = false;
     this.profile = data.profile;
     this.world = data.world;
     const enemyFactory = Enemies()[data.enemyId];
