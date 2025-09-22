@@ -12,6 +12,7 @@ import { CONFIG } from '@config/store'
 
 import { resolveTargets } from './targeting'
 import { critChance, elementMult, hitChance, tagResistMult, type RuleContext } from './rules'
+import { applyStatus, tickEndOfTurn } from './status'
 import type { Actor, BattleState, UseResult } from './types'
 
 const RNG_A = 1664525
@@ -47,6 +48,11 @@ export function endTurn(state: BattleState): BattleState {
   const actor = currentActorId ? state.actors[currentActorId] : undefined
   if (actor) {
     pushLog(state, `${actor.name} ended their turn.`)
+    tickEndOfTurn(state, actor.id)
+    evaluateOutcome(state)
+    if (state.ended) {
+      return state
+    }
   }
 
   state.current = (state.current + 1) % (state.order.length || 1)
@@ -215,6 +221,26 @@ function applyEffect(
         applyResource(state, user, target, amount, effect.resource)
       }
       break
+    case 'applyStatus': {
+      if (!effect.statusId) {
+        pushLog(state, `${action.name} tried to apply a status with no ID.`)
+        break
+      }
+
+      if (effect.canMiss) {
+        const roll = nextRandom(state)
+        const chance = clamp(hitChance(user, target, ruleCtx), 0, 1)
+        if (roll > chance) {
+          pushLog(state, `${user.name}'s ${action.name} failed to affect ${target.name}.`)
+          return
+        }
+      }
+
+      const turns = effect.statusTurns ?? Math.round(amount)
+      const stacks = normalizeStacks(amount)
+      applyStatus(state, target.id, effect.statusId, turns, { stacks, sourceId: user.id })
+      break
+    }
     default:
       // unsupported kinds will be ignored in this phase
       break
@@ -322,6 +348,14 @@ function applyResource(
   } else {
     pushLog(state, `${user.name} drained ${Math.round(Math.abs(diff))} ${label} from ${target.name}.`)
   }
+}
+
+function normalizeStacks(amount: number): number {
+  if (!Number.isFinite(amount)) {
+    return 1
+  }
+  const rounded = Math.round(Math.abs(amount))
+  return Math.max(1, rounded)
 }
 
 function resourceKeys(resource: Resource): ['hp' | 'sta' | 'mp', 'maxHp' | 'maxSta' | 'maxMp'] {
