@@ -6,6 +6,7 @@ import type {
 } from '@content/adapters'
 import { Statuses } from '@content/registry'
 import { elementMult, tagResistMult } from './rules'
+import { matchesFilter, resolveTargets } from './targeting'
 import type { Actor, BattleState, Status } from './types'
 
 export interface StatusApplyOptions {
@@ -445,29 +446,41 @@ function applyHookEffect(
     return
   }
 
-  const resolved = resolveEffectValue(effect, source, target, ctx)
-  if (resolved.kind === 'none') {
-    return
-  }
+  const baseTargets = effect.selector
+    ? resolveTargets(state, effect.selector, source.id)
+        .map((id) => state.actors[id])
+        .filter((actor): actor is Actor => Boolean(actor))
+    : [target].filter((actor): actor is Actor => Boolean(actor))
 
-  const amount = resolved.amount
-  switch (effect.kind) {
-    case 'damage': {
-      const element = effect.element ?? template.modifiers?.shield?.element
-      const finalAmount = amount * elementMult(element, target) * tagResistMult(target)
-      applyStatusDamage(state, template, target, finalAmount)
-      break
+  for (const resolvedTarget of baseTargets) {
+    if (effect.onlyIf && !matchesFilter(resolvedTarget, effect.onlyIf)) {
+      continue
     }
-    case 'heal':
-      applyStatusHeal(state, template, target, amount)
-      break
-    case 'resource':
-      if (effect.resource) {
-        applyStatusResource(state, template, target, amount, effect.resource)
+
+    const resolved = resolveEffectValue(effect, source, resolvedTarget, ctx)
+    if (resolved.kind === 'none') {
+      continue
+    }
+
+    const amount = resolved.amount
+    switch (effect.kind) {
+      case 'damage': {
+        const element = effect.element ?? template.modifiers?.shield?.element
+        const finalAmount = amount * elementMult(element, resolvedTarget) * tagResistMult(resolvedTarget)
+        applyStatusDamage(state, template, resolvedTarget, finalAmount)
+        break
       }
-      break
-    default:
-      break
+      case 'heal':
+        applyStatusHeal(state, template, resolvedTarget, amount)
+        break
+      case 'resource':
+        if (effect.resource) {
+          applyStatusResource(state, template, resolvedTarget, amount, effect.resource)
+        }
+        break
+      default:
+        break
+    }
   }
 }
 

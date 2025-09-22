@@ -38,7 +38,7 @@ export function resolveTargets(
   }
 
   let candidates = selector.condition
-    ? baseCandidates.filter((actor) => evaluateFilter(actor, selector.condition!))
+    ? baseCandidates.filter((actor) => matchesFilter(actor, selector.condition!))
     : baseCandidates
 
   if (!includeDead) {
@@ -102,7 +102,7 @@ function gatherCandidates(
   }
 }
 
-function evaluateFilter(actor: Actor, filter: Filter): boolean {
+export function matchesFilter(actor: Actor, filter: Filter): boolean {
   let result = true
 
   if (filter.test) {
@@ -110,15 +110,15 @@ function evaluateFilter(actor: Actor, filter: Filter): boolean {
   }
 
   if (filter.all) {
-    result = result && filter.all.every((inner) => evaluateFilter(actor, inner))
+    result = result && filter.all.every((inner) => matchesFilter(actor, inner))
   }
 
   if (filter.any) {
-    result = result && filter.any.some((inner) => evaluateFilter(actor, inner))
+    result = result && filter.any.some((inner) => matchesFilter(actor, inner))
   }
 
   if (filter.not) {
-    result = result && !evaluateFilter(actor, filter.not)
+    result = result && !matchesFilter(actor, filter.not)
   }
 
   return result
