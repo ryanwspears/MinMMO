@@ -218,6 +218,31 @@ describe('battle actions advanced behaviour', () => {
     expect(state.log.some((entry) => entry.includes('cleansed'))).toBe(true)
   })
 
+  it('blocks a skill with canUse until the condition is satisfied', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState([player], [enemy])
+
+    const desperation = makeSkill({
+      name: 'Desperation',
+      costs: { sta: 5, mp: 0, cooldown: 0 },
+      canUse: { test: { key: 'hpPct', op: 'lt', value: 1 } },
+      effects: [flatEffect('damage', 10)],
+    })
+
+    const firstAttempt = useSkill(state, desperation, player.id, [enemy.id])
+    expect(firstAttempt.ok).toBe(false)
+    expect(state.actors[player.id]?.stats.sta).toBe(20)
+    expect(state.log[state.log.length - 1]).toContain('cannot use Desperation')
+
+    enemy.stats.hp = 50
+
+    const secondAttempt = useSkill(state, desperation, player.id, [enemy.id])
+    expect(secondAttempt.ok).toBe(true)
+    expect(state.actors[player.id]?.stats.sta).toBe(15)
+    expect(state.log.some((entry) => entry.includes('used Desperation'))).toBe(true)
+  })
+
   it('enforces charges on limited-use skills', () => {
     const player = makeActor('P1')
     const enemy = makeActor('E1')
