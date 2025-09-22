@@ -31,6 +31,10 @@ export function createState(p: Params): BattleState {
     order,
     current: (('current' in p) && p.current!=null) ? p.current! : 0,
     turn:    (('turn' in p) && p.turn!=null)       ? p.turn!    : 1,
-    log:     (('log' in p) && p.log)               ? p.log!.slice() : []
+    log:     (('log' in p) && p.log)               ? p.log!.slice() : [],
+    cooldowns: {},
+    charges: {},
+    shields: {},
+    taunts: {},
   }
 }
