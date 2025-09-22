@@ -133,6 +133,8 @@ describe('battle actions basics', () => {
       targeting: makeSelector({ side: 'enemy' }),
     })
 
+    state.inventory.push({ id: bomb.id, qty: 1 })
+
     const result = useItem(state, bomb, player.id, [enemy.id])
     expect(result.ok).toBe(true)
     expect(state.actors[enemy.id]?.stats.hp).toBe(0)

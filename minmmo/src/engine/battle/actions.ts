@@ -12,8 +12,16 @@ import { CONFIG } from '@config/store'
 
 import { resolveTargets } from './targeting'
 import { critChance, elementMult, hitChance, tagResistMult, type RuleContext } from './rules'
-import { applyStatus, tickEndOfTurn } from './status'
-import type { Actor, BattleState, UseResult } from './types'
+import {
+  absorbDamageWithShields,
+  applyStatus,
+  applyTaunt,
+  cleanseStatuses,
+  grantShield,
+  tickEndOfTurn,
+  triggerStatusHooks,
+} from './status'
+import type { Actor, BattleState, ChargeState, UseResult } from './types'
 
 const RNG_A = 1664525
 const RNG_C = 1013904223
@@ -49,6 +57,7 @@ export function endTurn(state: BattleState): BattleState {
   if (actor) {
     pushLog(state, `${actor.name} ended their turn.`)
     tickEndOfTurn(state, actor.id)
+    tickCooldowns(state, actor.id)
     evaluateOutcome(state)
     if (state.ended) {
       return state
@@ -67,7 +76,10 @@ type ActionFormulaContext = FormulaContext & { state: BattleState; action: Runti
 
 type DamageOptions = {
   crit?: boolean
+  element?: string
 }
+
+type ItemCost = { id: string; qty: number; consume: boolean }
 
 function executeAction(
   state: BattleState,
@@ -91,6 +103,19 @@ function executeAction(
     return { ok: false, log: state.log, state }
   }
 
+  if (!checkCooldownReady(state, user, action)) {
+    return { ok: false, log: state.log, state }
+  }
+
+  if (!checkChargesAvailable(state, user, action)) {
+    return { ok: false, log: state.log, state }
+  }
+
+  const itemCosts = collectItemCosts(action)
+  if (!checkItemAvailability(state, itemCosts, action)) {
+    return { ok: false, log: state.log, state }
+  }
+
   if (!payResourceCost(user, action.costs?.sta ?? 0, 'sta', state, action.name)) {
     return { ok: false, log: state.log, state }
   }
@@ -110,6 +135,10 @@ function executeAction(
     pushLog(state, `${action.name} has no valid targets.`)
   }
 
+  applyItemCosts(state, itemCosts)
+  startCooldown(state, user, action)
+  consumeCharge(state, user, action)
+
   pushLog(state, `${user.name} used ${action.name}.`)
 
   for (const effect of action.effects ?? []) {
@@ -124,6 +153,12 @@ function executeAction(
 
     for (const target of targets) {
       applyEffect(state, action, effect, user, target)
+      if (state.ended) {
+        break
+      }
+    }
+    if (state.ended) {
+      break
     }
   }
 
@@ -210,7 +245,17 @@ function applyEffect(
         }
       }
 
-      applyDamage(state, user, target, finalAmount, { crit })
+      const dealt = applyDamage(state, user, target, finalAmount, { crit, element })
+      triggerStatusHooks(state, user, 'onDealDamage', {
+        other: target,
+        amount: dealt,
+        element,
+      })
+      triggerStatusHooks(state, target, 'onTakeDamage', {
+        other: user,
+        amount: dealt,
+        element,
+      })
       break
     }
     case 'heal':
@@ -239,6 +284,68 @@ function applyEffect(
       const turns = effect.statusTurns ?? Math.round(amount)
       const stacks = normalizeStacks(amount)
       applyStatus(state, target.id, effect.statusId, turns, { stacks, sourceId: user.id })
+      break
+    }
+    case 'cleanseStatus': {
+      const removed = cleanseStatuses(state, target, effect.cleanseTags)
+      if (removed.length === 0) {
+        pushLog(state, `${action.name} could not find any statuses to cleanse on ${target.name}.`)
+      } else {
+        pushLog(state, `${user.name} cleansed ${removed.join(', ')} from ${target.name}.`)
+      }
+      break
+    }
+    case 'shield': {
+      const shieldId = effect.shieldId ?? effect.statusId ?? action.id
+      if (!shieldId) {
+        pushLog(state, `${action.name} tried to grant a shield without an identifier.`)
+        break
+      }
+      const total = Math.max(0, amount)
+      const element = effect.element ?? action.element
+      if (total <= 0) {
+        grantShield(state, target, shieldId, 0, element, { replace: true })
+        pushLog(state, `${target.name}'s ${shieldId} faded.`)
+      } else {
+        const remaining = grantShield(state, target, shieldId, total, element)
+        pushLog(state, `${user.name} granted ${target.name} a ${shieldId} shield (${Math.round(remaining)} HP).`)
+      }
+      break
+    }
+    case 'taunt': {
+      const turns = effect.statusTurns ?? Math.max(1, Math.round(amount))
+      applyTaunt(state, target.id, user.id, turns)
+      if (turns > 0) {
+        pushLog(state, `${target.name} is taunted by ${user.name} for ${turns} turn(s).`)
+      } else {
+        pushLog(state, `${target.name} is no longer taunted.`)
+      }
+      break
+    }
+    case 'revive': {
+      const healAmount = Math.max(0, amount)
+      if (!target.alive) {
+        const restored = clamp(Math.max(1, Math.round(healAmount || target.stats.maxHp * 0.25)), 1, target.stats.maxHp)
+        target.stats.hp = restored
+        target.alive = true
+        pushLog(state, `${user.name} revived ${target.name} (${restored} HP).`)
+      } else {
+        applyHeal(state, user, target, healAmount)
+      }
+      break
+    }
+    case 'flee': {
+      state.ended = { reason: 'fled' }
+      pushLog(state, `${user.name} fled the battle!`)
+      break
+    }
+    case 'modifyStat': {
+      if (!effect.stat) {
+        pushLog(state, `${action.name} tried to modify a stat without specifying one.`)
+        break
+      }
+      const delta = Math.round(amount)
+      modifyStat(target, effect.stat, delta, state, user.name, action.name)
       break
     }
     default:
@@ -293,13 +400,29 @@ function applyDamage(
   target: Actor,
   amount: number,
   options: DamageOptions = {},
-) {
+): number {
   if (!target.alive) {
-    return
+    return 0
   }
-  const dmg = Math.max(0, amount)
+
+  let pending = Math.max(0, amount)
+  const shieldResult = absorbDamageWithShields(state, target, pending, options.element)
+  for (const log of shieldResult.logs) {
+    pushLog(state, log)
+  }
+  pending = shieldResult.remaining
+
+  if (pending <= 0) {
+    if (shieldResult.absorbed > 0) {
+      pushLog(state, `${user.name}'s attack was absorbed by ${target.name}'s shields.`)
+    } else {
+      pushLog(state, `${user.name}'s attack dealt no damage to ${target.name}.`)
+    }
+    return 0
+  }
+
   const before = target.stats.hp
-  const after = Math.max(0, before - dmg)
+  const after = Math.max(0, before - pending)
   target.stats.hp = after
   if (after <= 0) {
     target.alive = false
@@ -313,6 +436,7 @@ function applyDamage(
     entry += ` ${target.name} was defeated.`
   }
   pushLog(state, entry)
+  return diff
 }
 
 function applyHeal(state: BattleState, user: Actor, target: Actor, amount: number) {
@@ -350,12 +474,77 @@ function applyResource(
   }
 }
 
+function modifyStat(
+  target: Actor,
+  stat: NonNullable<RuntimeEffect['stat']>,
+  delta: number,
+  state: BattleState,
+  sourceName: string,
+  actionName: string,
+) {
+  let finalValue = 0
+  switch (stat) {
+    case 'atk':
+      target.stats.atk = Math.max(0, target.stats.atk + delta)
+      finalValue = target.stats.atk
+      break
+    case 'def':
+      target.stats.def = Math.max(0, target.stats.def + delta)
+      finalValue = target.stats.def
+      break
+    case 'maxHp':
+      target.stats.maxHp = Math.max(1, target.stats.maxHp + delta)
+      target.stats.hp = clamp(target.stats.hp, 0, target.stats.maxHp)
+      finalValue = target.stats.maxHp
+      break
+    case 'maxSta':
+      target.stats.maxSta = Math.max(0, target.stats.maxSta + delta)
+      target.stats.sta = clamp(target.stats.sta, 0, target.stats.maxSta)
+      finalValue = target.stats.maxSta
+      break
+    case 'maxMp':
+      target.stats.maxMp = Math.max(0, target.stats.maxMp + delta)
+      target.stats.mp = clamp(target.stats.mp, 0, target.stats.maxMp)
+      finalValue = target.stats.maxMp
+      break
+    default:
+      return
+  }
+
+  if (delta === 0) {
+    pushLog(state, `${sourceName}'s ${actionName} left ${target.name}'s ${formatStatLabel(stat)} unchanged.`)
+  } else {
+    const sign = delta > 0 ? '+' : ''
+    pushLog(
+      state,
+      `${sourceName}'s ${actionName} changed ${target.name}'s ${formatStatLabel(stat)} by ${sign}${delta} (now ${Math.round(finalValue)}).`,
+    )
+  }
+}
+
 function normalizeStacks(amount: number): number {
   if (!Number.isFinite(amount)) {
     return 1
   }
   const rounded = Math.round(Math.abs(amount))
   return Math.max(1, rounded)
+}
+
+function formatStatLabel(stat: NonNullable<RuntimeEffect['stat']>): string {
+  switch (stat) {
+    case 'atk':
+      return 'ATK'
+    case 'def':
+      return 'DEF'
+    case 'maxHp':
+      return 'Max HP'
+    case 'maxSta':
+      return 'Max STA'
+    case 'maxMp':
+      return 'Max MP'
+    default:
+      return stat
+  }
 }
 
 function resourceKeys(resource: Resource): ['hp' | 'sta' | 'mp', 'maxHp' | 'maxSta' | 'maxMp'] {
@@ -508,6 +697,146 @@ function fraction(value: number, max: number): number {
     return 0
   }
   return value / max
+}
+
+function collectItemCosts(action: RuntimeAction): ItemCost[] {
+  const map = new Map<string, { qty: number; consume: boolean }>()
+  const add = (id: string, qty: number, consume: boolean) => {
+    if (!id || qty <= 0) {
+      return
+    }
+    const existing = map.get(id)
+    if (existing) {
+      existing.qty += qty
+      existing.consume = existing.consume || consume
+    } else {
+      map.set(id, { qty, consume })
+    }
+  }
+
+  if (action.type === 'item') {
+    const id = action.costs?.item?.id ?? action.id
+    const qty = action.costs?.item?.qty ?? 1
+    add(id, Math.max(1, Math.round(qty)), action.consumable)
+  } else if (action.costs?.item) {
+    add(action.costs.item.id, Math.max(1, Math.round(action.costs.item.qty ?? 1)), true)
+  }
+
+  return Array.from(map.entries()).map(([id, value]) => ({ id, qty: value.qty, consume: value.consume }))
+}
+
+function checkItemAvailability(state: BattleState, costs: ItemCost[], action: RuntimeAction): boolean {
+  for (const cost of costs) {
+    const entry = state.inventory.find((item) => item.id === cost.id)
+    if (!entry || entry.qty < cost.qty) {
+      pushLog(state, `Missing ${cost.id} x${cost.qty} to use ${action.name}.`)
+      return false
+    }
+  }
+  return true
+}
+
+function applyItemCosts(state: BattleState, costs: ItemCost[]) {
+  for (const cost of costs) {
+    if (!cost.consume) {
+      continue
+    }
+    const entry = state.inventory.find((item) => item.id === cost.id)
+    if (!entry) {
+      continue
+    }
+    entry.qty = Math.max(0, entry.qty - cost.qty)
+    if (entry.qty <= 0) {
+      state.inventory = state.inventory.filter((item) => item !== entry)
+    }
+  }
+}
+
+function checkCooldownReady(state: BattleState, user: Actor, action: RuntimeAction): boolean {
+  const cooldown = Math.max(0, Math.floor(action.costs?.cooldown ?? 0))
+  if (cooldown <= 0) {
+    return true
+  }
+  const remaining = state.cooldowns[user.id]?.[action.id] ?? 0
+  if (remaining > 0) {
+    pushLog(state, `${action.name} is on cooldown for ${remaining} more turn(s).`)
+    return false
+  }
+  return true
+}
+
+function startCooldown(state: BattleState, user: Actor, action: RuntimeAction) {
+  const cooldown = Math.max(0, Math.floor(action.costs?.cooldown ?? 0))
+  if (cooldown <= 0) {
+    return
+  }
+  const map = ensureCooldownMap(state, user.id)
+  map[action.id] = cooldown
+}
+
+function tickCooldowns(state: BattleState, _actorId: string) {
+  for (const map of Object.values(state.cooldowns)) {
+    for (const [actionId, remaining] of Object.entries(map)) {
+      const next = Math.max(0, Math.floor(remaining) - 1)
+      if (next <= 0) {
+        delete map[actionId]
+      } else {
+        map[actionId] = next
+      }
+    }
+  }
+}
+
+function checkChargesAvailable(state: BattleState, user: Actor, action: RuntimeAction): boolean {
+  const maxCharges = Math.max(0, Math.floor(action.costs?.charges ?? 0))
+  if (maxCharges <= 0) {
+    return true
+  }
+  const map = ensureChargeMap(state, user.id)
+  const existing = map[action.id] ?? { remaining: maxCharges, max: maxCharges }
+  map[action.id] = existing
+  if (existing.remaining <= 0) {
+    pushLog(state, `${action.name} has no charges remaining.`)
+    return false
+  }
+  return true
+}
+
+function consumeCharge(state: BattleState, user: Actor, action: RuntimeAction) {
+  const maxCharges = Math.max(0, Math.floor(action.costs?.charges ?? 0))
+  if (maxCharges <= 0) {
+    return
+  }
+  const map = ensureChargeMap(state, user.id)
+  const existing = map[action.id] ?? { remaining: maxCharges, max: maxCharges }
+  map[action.id] = existing
+  if (existing.remaining > 0) {
+    existing.remaining -= 1
+  }
+}
+
+function ensureCooldownMap(
+  state: BattleState,
+  actorId: string,
+): Record<string, number> {
+  const existing = state.cooldowns[actorId]
+  if (existing) {
+    return existing
+  }
+  state.cooldowns[actorId] = {}
+  return state.cooldowns[actorId]
+}
+
+function ensureChargeMap(
+  state: BattleState,
+  actorId: string,
+): Record<string, ChargeState> {
+  const existing = state.charges[actorId]
+  if (existing) {
+    return existing
+  }
+  state.charges[actorId] = {}
+  return state.charges[actorId]
 }
 
 function pushLog(state: BattleState, entry: string) {
