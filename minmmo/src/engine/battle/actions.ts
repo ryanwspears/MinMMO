@@ -8,9 +8,15 @@ import type {
   ValueResolver,
 } from '@content/adapters'
 import type { ConditionOp, Filter, Resource } from '@config/schema'
+import { CONFIG } from '@config/store'
 
 import { resolveTargets } from './targeting'
+import { critChance, elementMult, hitChance, tagResistMult, type RuleContext } from './rules'
 import type { Actor, BattleState, UseResult } from './types'
+
+const RNG_A = 1664525
+const RNG_C = 1013904223
+const RNG_M = 0x100000000
 
 type RuntimeAction = RuntimeSkill | RuntimeItem
 
@@ -52,6 +58,10 @@ export function endTurn(state: BattleState): BattleState {
 }
 
 type ActionFormulaContext = FormulaContext & { state: BattleState; action: RuntimeAction }
+
+type DamageOptions = {
+  crit?: boolean
+}
 
 function executeAction(
   state: BattleState,
@@ -167,11 +177,36 @@ function applyEffect(
   const ctx: ActionFormulaContext = { state, action }
   const base = resolveValue(effect.value.resolve, effect.value.kind, user, target, ctx, effect, action)
   const amount = base.kind === 'none' ? 0 : base.amount
+  const ruleCtx: RuleContext = { state, action, effect }
 
   switch (effect.kind) {
-    case 'damage':
-      applyDamage(state, user, target, amount)
+    case 'damage': {
+      if (effect.canMiss) {
+        const roll = nextRandom(state)
+        const chance = clamp(hitChance(user, target, ruleCtx), 0, 1)
+        if (roll > chance) {
+          pushLog(state, `${user.name}'s ${action.name} missed ${target.name}.`)
+          return
+        }
+      }
+
+      const element = effect.element ?? action.element
+      let finalAmount = amount * elementMult(element, target) * tagResistMult(target)
+      let crit = false
+
+      if (effect.canCrit) {
+        const chance = clamp(critChance(user, target, ruleCtx), 0, 1)
+        const roll = nextRandom(state)
+        if (roll < chance) {
+          const { CRIT_MULT } = CONFIG().balance
+          finalAmount *= CRIT_MULT
+          crit = true
+        }
+      }
+
+      applyDamage(state, user, target, finalAmount, { crit })
       break
+    }
     case 'heal':
       applyHeal(state, user, target, amount)
       break
@@ -226,7 +261,13 @@ function normalizeAmount(
   return safe
 }
 
-function applyDamage(state: BattleState, user: Actor, target: Actor, amount: number) {
+function applyDamage(
+  state: BattleState,
+  user: Actor,
+  target: Actor,
+  amount: number,
+  options: DamageOptions = {},
+) {
   if (!target.alive) {
     return
   }
@@ -238,10 +279,14 @@ function applyDamage(state: BattleState, user: Actor, target: Actor, amount: num
     target.alive = false
   }
   const diff = before - after
-  pushLog(
-    state,
-    `${user.name} hit ${target.name} for ${Math.round(diff)} damage.${after <= 0 ? ` ${target.name} was defeated.` : ''}`,
-  )
+  let entry = `${user.name} hit ${target.name} for ${Math.round(diff)} damage.`
+  if (options.crit) {
+    entry += ' Critical hit!'
+  }
+  if (after <= 0) {
+    entry += ` ${target.name} was defeated.`
+  }
+  pushLog(state, entry)
 }
 
 function applyHeal(state: BattleState, user: Actor, target: Actor, amount: number) {
@@ -293,6 +338,13 @@ function resourceKeys(resource: Resource): ['hp' | 'sta' | 'mp', 'maxHp' | 'maxS
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function nextRandom(state: BattleState): number {
+  const seed = state.rngSeed >>> 0
+  const next = (Math.imul(seed, RNG_A) + RNG_C) >>> 0
+  state.rngSeed = next
+  return next / RNG_M
 }
 
 function evaluateOutcome(state: BattleState) {

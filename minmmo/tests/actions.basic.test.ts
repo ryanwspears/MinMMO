@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeEffect, RuntimeItem, RuntimeSkill, RuntimeTargetSelector } from '@content/adapters'
 import { useItem, useSkill, endTurn } from '@engine/battle/actions'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
+import { DEFAULTS } from '@config/defaults'
+import * as configStore from '@config/store'
 
 function makeActor(id: string, overrides: Partial<Actor['stats']> = {}): Actor {
   return {
@@ -100,6 +102,24 @@ function makeState(player: Actor, enemy: Actor): BattleState {
     inventory: [],
   })
 }
+
+let configSpy: ReturnType<typeof vi.spyOn> | undefined
+
+beforeEach(() => {
+  const cfg = JSON.parse(JSON.stringify(DEFAULTS))
+  cfg.balance.BASE_HIT = 1
+  cfg.balance.BASE_CRIT = 0
+  cfg.balance.DODGE_FLOOR = 0
+  cfg.balance.HIT_CEIL = 1
+  cfg.balance.ELEMENT_MATRIX = { neutral: { neutral: 1 } }
+  cfg.balance.RESISTS_BY_TAG = {}
+  configSpy = vi.spyOn(configStore, 'CONFIG').mockReturnValue(cfg)
+})
+
+afterEach(() => {
+  configSpy?.mockRestore()
+  vi.restoreAllMocks()
+})
 
 describe('battle actions basics', () => {
   it('uses a damaging item to defeat an enemy', () => {
