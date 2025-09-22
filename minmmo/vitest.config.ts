@@ -15,8 +15,6 @@ export default defineConfig({
       '@cms': r('src/cms'),
     },
   },
-
-export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
