@@ -116,20 +116,28 @@ function executeAction(
     return { ok: false, log: state.log, state }
   }
 
-  if (!payResourceCost(user, action.costs?.sta ?? 0, 'sta', state, action.name)) {
-    return { ok: false, log: state.log, state }
-  }
-
-  if (!payResourceCost(user, action.costs?.mp ?? 0, 'mp', state, action.name)) {
-    return { ok: false, log: state.log, state }
-  }
-
+  const targetingSeed = state.rngSeed
   const baseTargetIds =
     providedTargetIds && providedTargetIds.length
       ? providedTargetIds
       : resolveTargets(state, normalizeSelector(action.targeting), userId)
 
   const baseTargets = filterActors(state, baseTargetIds)
+
+  if (!checkCanUseFilter(state, action, user, baseTargets)) {
+    state.rngSeed = targetingSeed
+    return { ok: false, log: state.log, state }
+  }
+
+  if (!payResourceCost(user, action.costs?.sta ?? 0, 'sta', state, action.name)) {
+    state.rngSeed = targetingSeed
+    return { ok: false, log: state.log, state }
+  }
+
+  if (!payResourceCost(user, action.costs?.mp ?? 0, 'mp', state, action.name)) {
+    state.rngSeed = targetingSeed
+    return { ok: false, log: state.log, state }
+  }
 
   if (baseTargets.length === 0) {
     pushLog(state, `${action.name} has no valid targets.`)
@@ -176,6 +184,28 @@ function filterActors(state: BattleState, ids: string[]): Actor[] {
   return ids
     .map((id) => state.actors[id])
     .filter((actor): actor is Actor => Boolean(actor))
+}
+
+function checkCanUseFilter(
+  state: BattleState,
+  action: RuntimeAction,
+  user: Actor,
+  targets: Actor[],
+): boolean {
+  const filter = action.canUse
+  if (!filter) {
+    return true
+  }
+
+  const userMatches = matchesFilter(user, filter)
+  const targetMatches = targets.some((target) => matchesFilter(target, filter))
+
+  if (userMatches || targetMatches) {
+    return true
+  }
+
+  pushLog(state, `${user.name} cannot use ${action.name} right now.`)
+  return false
 }
 
 function payResourceCost(
