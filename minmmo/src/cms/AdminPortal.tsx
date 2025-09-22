@@ -381,7 +381,7 @@ interface SkillFormProps {
 
 function SkillForm({ kind, title, skill, onChange, errors, extras }: SkillFormProps) {
   const updateSkill = (patch: Partial<SkillDef>) => {
-    onChange({ ...skill, ...patch, type: kind });
+    onChange({ ...skill, ...patch });
   };
 
   const updateTargeting = (patch: Partial<SkillDef['targeting']>) => {
@@ -389,15 +389,15 @@ function SkillForm({ kind, title, skill, onChange, errors, extras }: SkillFormPr
   };
 
   const updateCosts = (patch: Partial<NonNullable<SkillDef['costs']>>) => {
-    const nextCosts = { ...(skill.costs ?? {}) };
+    const nextCosts: Record<string, unknown> = { ...(skill.costs ?? {}) };
     for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined || value === null || value === '') {
+      if (value === undefined || value === null) {
         delete (nextCosts as any)[key];
       } else {
         (nextCosts as any)[key] = value;
       }
     }
-    updateSkill({ costs: Object.keys(nextCosts).length ? nextCosts : undefined });
+    updateSkill({ costs: Object.keys(nextCosts).length ? (nextCosts as NonNullable<SkillDef['costs']>) : undefined });
   };
 
   const updateCostsNumber = (key: keyof NonNullable<SkillDef['costs']>) => (value: string) => {
@@ -406,14 +406,22 @@ function SkillForm({ kind, title, skill, onChange, errors, extras }: SkillFormPr
   };
 
   const updateItemCost = (field: 'id' | 'qty', value: string) => {
-    const existing = skill.costs?.item ?? {};
-    const next = { ...existing } as { id?: string; qty?: number };
-    if (field === 'id') {
-      next.id = value;
-    } else {
-      next.qty = value === '' ? undefined : Number(value);
+    const existing = skill.costs?.item;
+    const nextId = field === 'id' ? value : existing?.id ?? '';
+    const rawQty =
+      field === 'qty'
+        ? value === ''
+          ? undefined
+          : Number(value)
+        : existing?.qty;
+    const nextQty = rawQty !== undefined && Number.isFinite(rawQty) ? rawQty : undefined;
+
+    if (!nextId || nextQty === undefined) {
+      updateCosts({ item: undefined });
+      return;
     }
-    updateCosts({ item: next });
+
+    updateCosts({ item: { id: nextId, qty: nextQty } });
   };
 
   const updateEffect = (index: number, patch: Partial<Effect>) => {

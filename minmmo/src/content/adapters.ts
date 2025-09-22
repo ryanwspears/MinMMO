@@ -128,7 +128,8 @@ export interface RuntimeItem extends RuntimeActionBase {
   consumable: boolean;
 }
 
-export interface RuntimeStatusTemplate extends Omit<StatusDef, 'hooks'> {
+export interface RuntimeStatusTemplate
+  extends Omit<StatusDef, 'hooks' | 'durationTurns' | 'stackRule' | 'maxStacks' | 'tags' | 'modifiers'> {
   stackRule: StackRule;
   maxStacks: number;
   durationTurns: number | null;

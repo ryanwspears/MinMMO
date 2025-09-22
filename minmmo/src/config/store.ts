@@ -52,7 +52,9 @@ export function importConfig(json: string) {
 
 export function subscribe(fn: (cfg: GameConfig) => void) {
   subs.add(fn);
-  return () => subs.delete(fn);
+  return () => {
+    subs.delete(fn);
+  };
 }
 
 export const CONFIG = () => current;

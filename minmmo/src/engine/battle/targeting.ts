@@ -68,7 +68,6 @@ export function resolveTargets(
       return candidates
         .slice(0, selector.count != null ? Math.max(0, selector.count) : candidates.length)
         .map((actor) => actor.id)
-    case 'self':
     default:
       return includeDead || user.alive ? [userId] : []
   }

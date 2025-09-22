@@ -88,7 +88,7 @@ const FilterSchema: z.ZodType<any> = z.lazy(() =>
     .strip()
 ).catch({});
 
-const TargetSelectorSchema: z.ZodType<TargetSelector> = z
+const TargetSelectorSchema = z
   .object({
     side: enumOptional(targetSides),
     mode: enumOptional(targetModes),
@@ -99,7 +99,7 @@ const TargetSelectorSchema: z.ZodType<TargetSelector> = z
   })
   .partial()
   .strip()
-  .catch({ side: 'enemy', mode: 'single' } as TargetSelector);
+  .catch({ side: 'enemy', mode: 'single' } as TargetSelector) as z.ZodType<TargetSelector>;
 
 const EffectSchema = z
   .object({
@@ -235,7 +235,7 @@ const StatsSchema = z
 
 const ClassPresetSchema: z.ZodType<ClassPreset> = StatsSchema as z.ZodType<ClassPreset>;
 
-const ClassesSchema: z.ZodType<Record<string, ClassPreset>> = z.record(ClassPresetSchema).catch({});
+const ClassesSchema = z.record(ClassPresetSchema).catch({}) as z.ZodType<Record<string, ClassPreset>>;
 
 const ClassSkillsSchema: z.ZodType<ClassSkills> = z
   .record(z.array(optionalString()).catch([]))
@@ -389,7 +389,7 @@ const BalanceSchema = z
   .partial()
   .strip();
 
-const GameConfigSchema: z.ZodType<Partial<GameConfig>> = z
+const GameConfigSchema = z
   .object({
     __version: coerceNumber(),
     classes: ClassesSchema.optional(),
@@ -405,7 +405,7 @@ const GameConfigSchema: z.ZodType<Partial<GameConfig>> = z
     npcs: z.record(NPCSchema).catch({}).optional(),
   })
   .partial()
-  .strip();
+  .strip() as z.ZodType<Partial<GameConfig>>;
 
 function deepMerge<T>(base: T, patch: any): T {
   if (Array.isArray(base)) {
