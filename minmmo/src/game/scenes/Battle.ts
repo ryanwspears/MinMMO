@@ -33,13 +33,21 @@ export class Battle extends Phaser.Scene {
     skillBtn.on('pointerdown', ()=>{
       const ids = Object.keys(Skills())
       if (!ids.length) { this.state.log.push('No skills in config.'); render(); return }
-      useSkill(this.state, Skills()[ids[0]], 'P1', ['E1']); render()
+      const result = useSkill(this.state, Skills()[ids[0]], 'P1', ['E1'])
+      if (!result.ok) {
+        // already logged
+      }
+      render()
     })
     const itemBtn = this.add.text(140, 420, '[Use Item]', { color:'#7c5cff' }).setInteractive()
     itemBtn.on('pointerdown', ()=>{
       const ids = Object.keys(Items())
       if (!ids.length) { this.state.log.push('No items in config.'); render(); return }
-      useItem(this.state, Items()[ids[0]], 'P1', ['E1']); render()
+      const result = useItem(this.state, Items()[ids[0]], 'P1', ['E1'])
+      if (!result.ok) {
+        // already logged
+      }
+      render()
     })
     const endBtn = this.add.text(260, 420, '[End Turn]', { color:'#7c5cff' }).setInteractive()
     endBtn.on('pointerdown', ()=>{ endTurn(this.state); render() })
