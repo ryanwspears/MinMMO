@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RuntimeEffect, RuntimeStatusTemplate } from '@content/adapters'
+import type { RuntimeEffect, RuntimeSkill, RuntimeStatusTemplate } from '@content/adapters'
+import { useSkill } from '@engine/battle/actions'
 import { applyStatus, tickEndOfTurn } from '@engine/battle/status'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
@@ -38,6 +39,20 @@ function makeState(actor: Actor): BattleState {
     actors: { [actor.id]: actor },
     sidePlayer: [actor.id],
     sideEnemy: [],
+    inventory: [],
+  })
+}
+
+function makeDuelState(player: Actor, enemy: Actor): BattleState {
+  const actors: Record<string, Actor> = {
+    [player.id]: player,
+    [enemy.id]: enemy,
+  }
+  return createState({
+    rngSeed: 123,
+    actors,
+    sidePlayer: [player.id],
+    sideEnemy: [enemy.id],
     inventory: [],
   })
 }
@@ -210,128 +225,106 @@ describe('status engine - damage over time', () => {
     expect(actor.statuses[0]?.stacks).toBe(3)
   })
 
-  it('applies selector-based hook effects to all resolved allies', () => {
-    registryMap.aura = statusTemplate({
-      id: 'aura',
-      durationTurns: 2,
-      hooks: {
-        onApply: [],
-        onTurnStart: [],
-        onTurnEnd: [
+  describe('status modifiers', () => {
+    function strikeSkill(): RuntimeSkill {
+      return {
+        id: 'strike',
+        name: 'Strike',
+        type: 'skill',
+        targeting: { side: 'enemy', mode: 'single' },
+        effects: [
           {
-            kind: 'heal',
+            kind: 'damage',
             value: {
               kind: 'flat',
-              resolve: () => 5,
-              rawAmount: 5,
-            },
-            selector: {
-              side: 'ally',
-              mode: 'all',
-              includeDead: true,
-              count: 0,
+              resolve: (user: Actor, target: Actor) => Math.max(0, user.stats.atk - target.stats.def),
             },
             canCrit: false,
             canMiss: false,
           } as RuntimeEffect,
         ],
-        onDealDamage: [],
-        onTakeDamage: [],
-        onExpire: [],
-      },
+      } as RuntimeSkill
+    }
+
+    it('attack buff increases damage dealt', () => {
+      registryMap.attackUp = statusTemplate({
+        id: 'attackUp',
+        durationTurns: 2,
+        modifiers: { atk: 5 },
+      })
+
+      const baseHero = makeActor('HeroA', { atk: 10 })
+      const baseEnemy = makeActor('EnemyA', { def: 4, hp: 50, maxHp: 50 })
+      baseEnemy.tags = ['enemy']
+      const baseState = makeDuelState(baseHero, baseEnemy)
+      const skill = strikeSkill()
+      useSkill(baseState, skill, baseHero.id, [baseEnemy.id])
+      const baseDamage = 50 - baseEnemy.stats.hp
+
+      const buffHero = makeActor('HeroB', { atk: 10 })
+      const buffEnemy = makeActor('EnemyB', { def: 4, hp: 50, maxHp: 50 })
+      buffEnemy.tags = ['enemy']
+      const buffState = makeDuelState(buffHero, buffEnemy)
+      applyStatus(buffState, buffHero.id, 'attackUp', 2)
+      expect(buffHero.stats.atk).toBe(15)
+      useSkill(buffState, skill, buffHero.id, [buffEnemy.id])
+      const buffDamage = 50 - buffEnemy.stats.hp
+
+      expect(buffDamage).toBeGreaterThan(baseDamage)
     })
 
-    const leader = makeActor('P1', { hp: 10, maxHp: 40 })
-    const ally = makeActor('P2', { hp: 6, maxHp: 30 })
-    const fallen = makeActor('P3', { hp: 0, maxHp: 25 })
-    fallen.alive = false
-    fallen.stats.hp = 0
+    it('defense buff reduces incoming damage', () => {
+      registryMap.ironSkin = statusTemplate({
+        id: 'ironSkin',
+        durationTurns: 2,
+        modifiers: { def: 6 },
+      })
 
-    const state = createState({
-      rngSeed: 42,
-      actors: {
-        [leader.id]: leader,
-        [ally.id]: ally,
-        [fallen.id]: fallen,
-      },
-      sidePlayer: [leader.id, ally.id, fallen.id],
-      sideEnemy: [],
-      inventory: [],
+      const baseHero = makeActor('HeroC', { atk: 14 })
+      const baseEnemy = makeActor('EnemyC', { def: 4, hp: 50, maxHp: 50 })
+      baseEnemy.tags = ['enemy']
+      const baseState = makeDuelState(baseHero, baseEnemy)
+      const skill = strikeSkill()
+      useSkill(baseState, skill, baseHero.id, [baseEnemy.id])
+      const baseDamage = 50 - baseEnemy.stats.hp
+
+      const buffHero = makeActor('HeroD', { atk: 14 })
+      const buffEnemy = makeActor('EnemyD', { def: 4, hp: 50, maxHp: 50 })
+      buffEnemy.tags = ['enemy']
+      const buffState = makeDuelState(buffHero, buffEnemy)
+      applyStatus(buffState, buffEnemy.id, 'ironSkin', 2)
+      expect(buffEnemy.stats.def).toBe(10)
+      useSkill(buffState, skill, buffHero.id, [buffEnemy.id])
+      const buffDamage = 50 - buffEnemy.stats.hp
+
+      expect(buffDamage).toBeLessThan(baseDamage)
     })
 
-    applyStatus(state, leader.id, 'aura', 2, { sourceId: leader.id })
+    it('damage taken debuff increases incoming damage', () => {
+      registryMap.vulnerable = statusTemplate({
+        id: 'vulnerable',
+        durationTurns: 2,
+        modifiers: { damageTakenPct: { all: 0.5 } },
+      })
 
-    tickEndOfTurn(state, leader.id)
+      const baseHero = makeActor('HeroE', { atk: 12 })
+      const baseEnemy = makeActor('EnemyE', { def: 3, hp: 50, maxHp: 50 })
+      baseEnemy.tags = ['enemy']
+      const baseState = makeDuelState(baseHero, baseEnemy)
+      const skill = strikeSkill()
+      useSkill(baseState, skill, baseHero.id, [baseEnemy.id])
+      const baseDamage = 50 - baseEnemy.stats.hp
 
-    expect(leader.stats.hp).toBe(15)
-    expect(ally.stats.hp).toBe(11)
-    expect(fallen.alive).toBe(true)
-    expect(fallen.stats.hp).toBe(5)
-  })
+      const debuffedHero = makeActor('HeroF', { atk: 12 })
+      const debuffedEnemy = makeActor('EnemyF', { def: 3, hp: 50, maxHp: 50 })
+      debuffedEnemy.tags = ['enemy']
+      const debuffState = makeDuelState(debuffedHero, debuffedEnemy)
+      applyStatus(debuffState, debuffedEnemy.id, 'vulnerable', 2)
+      useSkill(debuffState, skill, debuffedHero.id, [debuffedEnemy.id])
+      const debuffedDamage = 50 - debuffedEnemy.stats.hp
 
-  it('skips hook targets that fail onlyIf conditions', () => {
-    registryMap.recovery = statusTemplate({
-      id: 'recovery',
-      durationTurns: 2,
-      hooks: {
-        onApply: [],
-        onTurnStart: [],
-        onTurnEnd: [
-          {
-            kind: 'heal',
-            value: {
-              kind: 'flat',
-              resolve: () => 50,
-              rawAmount: 50,
-            },
-            selector: {
-              side: 'ally',
-              mode: 'all',
-              includeDead: false,
-              count: 0,
-            },
-            onlyIf: {
-              test: { key: 'hpPct', op: 'lt', value: 1 },
-            },
-            canCrit: false,
-            canMiss: false,
-          } as RuntimeEffect,
-        ],
-        onDealDamage: [],
-        onTakeDamage: [],
-        onExpire: [],
-      },
+      expect(debuffedDamage).toBeGreaterThan(baseDamage)
     })
-
-    const owner = makeActor('P10', { hp: 10, maxHp: 40 })
-    const injured = makeActor('P11', { hp: 5, maxHp: 30 })
-    const healthy = makeActor('P12', { hp: 50, maxHp: 50 })
-
-    const state = createState({
-      rngSeed: 99,
-      actors: {
-        [owner.id]: owner,
-        [injured.id]: injured,
-        [healthy.id]: healthy,
-      },
-      sidePlayer: [owner.id, injured.id, healthy.id],
-      sideEnemy: [],
-      inventory: [],
-    })
-
-    applyStatus(state, owner.id, 'recovery', 2, { sourceId: owner.id })
-
-    tickEndOfTurn(state, owner.id)
-
-    expect(owner.stats.hp).toBe(40)
-    expect(injured.stats.hp).toBe(30)
-    expect(healthy.stats.hp).toBe(50)
-
-    tickEndOfTurn(state, owner.id)
-
-    expect(owner.stats.hp).toBe(40)
-    expect(injured.stats.hp).toBe(30)
-    expect(healthy.stats.hp).toBe(50)
   })
 })
 

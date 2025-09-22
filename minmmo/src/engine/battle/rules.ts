@@ -12,7 +12,8 @@ export function hitChance(user: Actor, target: Actor, _ctx: RuleContext): number
   const { balance } = CONFIG()
   const levelDiff = (user.stats.lv - target.stats.lv) * 0.02
   const statDiff = (user.stats.atk - target.stats.def) * 0.01
-  const raw = balance.BASE_HIT + levelDiff + statDiff
+  const dodgePenalty = target.statusModifiers?.dodgeBonus ?? 0
+  const raw = balance.BASE_HIT + levelDiff + statDiff - dodgePenalty
   return clamp(raw, balance.DODGE_FLOOR, balance.HIT_CEIL)
 }
 
@@ -20,7 +21,8 @@ export function critChance(user: Actor, target: Actor, _ctx: RuleContext): numbe
   const { balance } = CONFIG()
   const levelBonus = Math.max(0, user.stats.lv - target.stats.lv) * 0.01
   const statBonus = Math.max(0, user.stats.atk - target.stats.def) * 0.005
-  const raw = balance.BASE_CRIT + levelBonus + statBonus
+  const critBonus = user.statusModifiers?.critChanceBonus ?? 0
+  const raw = balance.BASE_CRIT + levelBonus + statBonus + critBonus
   return clamp(raw, 0, 1)
 }
 
