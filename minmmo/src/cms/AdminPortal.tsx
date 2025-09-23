@@ -68,6 +68,10 @@ const resources = ['hp', 'sta', 'mp'] as const satisfies readonly Resource[];
 const statKeys = ['atk', 'def', 'maxHp', 'maxSta', 'maxMp'] as const;
 const stackRules = ['ignore', 'renew', 'stackCount', 'stackMagnitude'] as const satisfies readonly StackRule[];
 const npcKinds = ['merchant', 'trainer', 'questGiver', 'generic'] as const satisfies readonly NPCDef['kind'][];
+const inventoryRarities =
+  ['common', 'uncommon', 'rare', 'epic'] as const satisfies readonly NonNullable<
+    NonNullable<NPCDef['inventory']>[number]['rarity']
+  >[];
 
 const TargetingSchema = z
   .object({
@@ -1742,17 +1746,20 @@ function NpcForm({ npc, onChange, errors }: NpcFormProps) {
     updateNpc({ dialogue: hasContent ? next : undefined });
   };
 
-  const inventory = npc.inventory ?? [];
-  const updateInventoryItem = (index: number, patch: Partial<{ id: string; qty: number; price?: number; rarity?: string }>) => {
+  const inventory = (npc.inventory ?? []) as NonNullable<NPCDef['inventory']>;
+  const updateInventoryItem = (
+    index: number,
+    patch: Partial<NonNullable<NPCDef['inventory']>[number]>,
+  ) => {
     const next = inventory.map((item, i) => (i === index ? { ...item, ...patch } : item));
     updateNpc({ inventory: next });
   };
   const addInventoryItem = () => updateNpc({ inventory: [...inventory, { id: '', qty: 1 }] });
   const removeInventoryItem = (index: number) => updateNpc({ inventory: inventory.filter((_, i) => i !== index) });
 
-  const trainer = npc.trainer ?? {};
+  const trainer = (npc.trainer ?? { teaches: [] as string[] }) as NonNullable<NPCDef['trainer']>;
   const teaches = trainer.teaches ?? [];
-  const priceEntries = Object.entries(trainer.priceBySkill ?? {});
+  const priceEntries = Object.entries(trainer.priceBySkill ?? {}) as [string, number][];
   const setPriceEntries = (entries: [string, number][]) => {
     const record: Record<string, number> = {};
     entries.forEach(([key, value]) => {
@@ -1865,7 +1872,20 @@ function NpcForm({ npc, onChange, errors }: NpcFormProps) {
             </label>
             <label>
               <div>Rarity</div>
-              <input value={item.rarity ?? ''} onChange={(e) => updateInventoryItem(index, { rarity: e.target.value })} />
+              <select
+                value={item.rarity ?? ''}
+                onChange={(e) => {
+                  const value = e.target.value as (typeof inventoryRarities)[number] | '';
+                  updateInventoryItem(index, { rarity: value === '' ? undefined : value });
+                }}
+              >
+                <option value="">None</option>
+                {inventoryRarities.map((rarity) => (
+                  <option key={rarity} value={rarity}>
+                    {rarity}
+                  </option>
+                ))}
+              </select>
               <FieldError error={getError(`inventory.${index}.rarity`)} />
             </label>
             <button type="button" onClick={() => removeInventoryItem(index)}>
