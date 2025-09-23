@@ -4,7 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn } from '@engine/battle/actions';
-import { resolveTargets } from '@engine/battle/targeting';
+import { resolveTargets, resolveTauntTargetId } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
   PlayerProfile,
@@ -207,6 +207,18 @@ export class Battle extends Phaser.Scene {
   private collectTargets(selector: RuntimeSkill['targeting'], userId: string): string[] {
     const allies = this.state.sidePlayer.includes(userId) ? this.state.sidePlayer : this.state.sideEnemy;
     const enemies = this.state.sidePlayer.includes(userId) ? this.state.sideEnemy : this.state.sidePlayer;
+    const includeDead = selector.includeDead ?? false;
+
+    if (selector.side === 'enemy' || selector.side === 'any') {
+      const tauntTargetId = resolveTauntTargetId(this.state, userId);
+      if (tauntTargetId) {
+        const actor = this.state.actors[tauntTargetId];
+        if (actor && actor.alive) {
+          return [tauntTargetId];
+        }
+      }
+    }
+
     let pool: string[] = [];
     switch (selector.side) {
       case 'self':
@@ -225,7 +237,7 @@ export class Battle extends Phaser.Scene {
         pool = enemies.slice();
         break;
     }
-    if (!selector.includeDead) {
+    if (!includeDead) {
       pool = pool.filter((id) => this.state.actors[id]?.alive);
     }
     return pool;

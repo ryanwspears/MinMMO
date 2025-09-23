@@ -86,6 +86,10 @@ function createState(): BattleState {
     sideEnemy: [slime.id, goblin.id],
     inventory: [],
     log: [],
+    cooldowns: {},
+    charges: {},
+    shields: {},
+    taunts: {},
   }
 }
 

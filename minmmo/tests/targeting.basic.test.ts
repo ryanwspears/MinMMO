@@ -11,6 +11,25 @@ describe('resolveTargets', () => {
     expect(resolveTargets(state, selector, 'hero')).toEqual(['slime'])
   })
 
+  it('forces taunted actors to target the source enemy', () => {
+    const state = createState()
+    state.taunts.hero = { sourceId: 'goblin', turns: 1 }
+
+    const selector: TargetSelector = { side: 'enemy', mode: 'single' }
+    expect(resolveTargets(state, selector, 'hero')).toEqual(['goblin'])
+    expect(state.taunts.hero).toBeDefined()
+  })
+
+  it('clears taunts when the source is no longer valid', () => {
+    const state = createState()
+    state.taunts.hero = { sourceId: 'goblin', turns: 1 }
+    state.actors.goblin.alive = false
+
+    const selector: TargetSelector = { side: 'enemy', mode: 'single' }
+    expect(resolveTargets(state, selector, 'hero')).toEqual(['slime'])
+    expect(state.taunts.hero).toBeUndefined()
+  })
+
   it('returns all allies for all mode', () => {
     const state = createState()
     const selector: TargetSelector = { side: 'ally', mode: 'all' }
@@ -109,6 +128,10 @@ function createState(): BattleState {
     sideEnemy: [slime.id, goblin.id],
     inventory: [],
     log: [],
+    cooldowns: {},
+    charges: {},
+    shields: {},
+    taunts: {},
   }
 }
 
