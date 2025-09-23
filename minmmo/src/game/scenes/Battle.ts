@@ -332,11 +332,11 @@ export class Battle extends Phaser.Scene {
     const contentWidth = Math.max(0, rect.width - metrics.textX - metrics.padding);
     const textMaxWidth = contentWidth;
     card.nameText.setPosition(metrics.textX, metrics.nameY);
-    card.nameText.setMaxWidth(textMaxWidth);
+    this.applyTextMaxWidth(card.nameText, textMaxWidth);
     card.classText.setPosition(metrics.textX, metrics.classY);
-    card.classText.setMaxWidth(textMaxWidth);
+    this.applyTextMaxWidth(card.classText, textMaxWidth);
     card.levelText.setPosition(metrics.textX, metrics.levelY);
-    card.levelText.setMaxWidth(textMaxWidth);
+    this.applyTextMaxWidth(card.levelText, textMaxWidth);
     card.statusText.setPosition(metrics.textX, metrics.statusY);
     card.statusText.setWordWrapWidth(Math.max(1, textMaxWidth));
 
@@ -347,6 +347,18 @@ export class Battle extends Phaser.Scene {
       height: metrics.barHeight,
       spacing: metrics.barSpacing,
     };
+  }
+
+  private applyTextMaxWidth(text: Phaser.GameObjects.Text, width: number) {
+    const maxWidth = Math.max(0, width);
+    if (maxWidth > 0) {
+      const effectiveWidth = Math.max(1, maxWidth);
+      text.setFixedSize(effectiveWidth, 0);
+      text.setWordWrapWidth(effectiveWidth);
+    } else {
+      text.setFixedSize(0, 0);
+      text.setWordWrapWidth(null);
+    }
   }
 
   private renderActions() {
@@ -678,11 +690,11 @@ export class Battle extends Phaser.Scene {
     const activeRows = this.commandRows.filter((row) => row.tab === this.commandTab);
     const rowHeight = Math.max(32, layout.commandRowHeight);
     const rowSpacing = Math.max(4, layout.commandRowSpacing);
+    const textPadding = Math.max(8, layout.commandTextPadding);
     const iconWidth = Math.max(
       32,
       Math.min(layout.commandIconWidth, Math.max(0, contentRect.width - textPadding * 3)),
     );
-    const textPadding = Math.max(8, layout.commandTextPadding);
     let y = contentRect.y + textPadding;
 
     for (const row of activeRows) {
@@ -714,8 +726,7 @@ export class Battle extends Phaser.Scene {
         0,
         contentRect.width - iconX - iconWidth - textPadding * 3 - (row.detail ? row.detail.width : 0),
       );
-      row.label.setMaxWidth(labelMaxWidth);
-      row.label.setWordWrapWidth(Math.max(0, labelMaxWidth));
+      this.applyTextMaxWidth(row.label, labelMaxWidth);
       row.label.setPosition(iconX + iconWidth + textPadding, rowHeight / 2 - row.label.height / 2);
       if (row.detail) {
         row.detail.setPosition(
@@ -820,8 +831,7 @@ export class Battle extends Phaser.Scene {
       button.hitArea.setPosition(0, 0);
       button.hitArea.setSize(button.width, button.height);
       button.hitArea.setDisplaySize(button.width, button.height);
-      button.label.setWordWrapWidth(labelMaxWidth);
-      button.label.setMaxWidth(labelMaxWidth);
+      this.applyTextMaxWidth(button.label, labelMaxWidth);
       button.label.setPosition(
         buttonPaddingX,
         Math.max(buttonPaddingY, button.height / 2 - button.label.height / 2),
