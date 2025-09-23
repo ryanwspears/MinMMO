@@ -34,6 +34,7 @@ const effectKinds = [
   'summon',
   'giveItem',
   'removeItem',
+  'preventAction',
 ] as const;
 const targetSides = ['self', 'ally', 'enemy', 'any'] as const;
 const targetModes = ['self', 'single', 'all', 'random', 'lowest', 'highest', 'condition'] as const;
