@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CONFIG } from '@config/store';
 import { Items, Skills, Enemies, Statuses } from '@content/registry';
-import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
+import type { RuntimeItem, RuntimeSkill, RuntimeCost } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn, collectUsableTargets, attemptFlee } from '@engine/battle/actions';
 import { tickStartOfTurn } from '@engine/battle/status';
@@ -60,15 +60,40 @@ interface LayoutMetrics {
   rightColumnX: number;
   logWidth: number;
   logY: number;
-  endTurnX: number;
-  endTurnY: number;
   targetX: number;
-  skillColumnX: number;
-  itemColumnX: number;
-  commandsY: number;
+  commandPanel: LayoutRect;
+  commandTabs: LayoutRect;
+  commandContent: LayoutRect;
+  commandTabSpacing: number;
+  commandRowHeight: number;
+  commandRowSpacing: number;
+  commandIconWidth: number;
+  commandTextPadding: number;
   playerCard: LayoutRect;
   enemyCard: { x: number; startY: number; width: number; height: number; spacing: number };
   cardLayout: CardLayoutMetrics;
+}
+
+type CommandTab = 'actions' | 'skills' | 'items';
+
+interface CommandTabButton {
+  key: CommandTab;
+  container: Phaser.GameObjects.Container;
+  background: Phaser.GameObjects.Graphics;
+  hitArea: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+}
+
+interface CommandRow {
+  tab: CommandTab;
+  container: Phaser.GameObjects.Container;
+  background: Phaser.GameObjects.Graphics;
+  hitArea: Phaser.GameObjects.Rectangle;
+  iconBackground: Phaser.GameObjects.Graphics;
+  iconText: Phaser.GameObjects.Text;
+  label: Phaser.GameObjects.Text;
+  detail?: Phaser.GameObjects.Text;
+  onClick?: () => void;
 }
 
 interface ActorCardElements {
@@ -96,10 +121,11 @@ export class Battle extends Phaser.Scene {
   private logText!: Phaser.GameObjects.Text;
   private logPlayer!: BattleLogPlayer;
   private headerTitle?: Phaser.GameObjects.Text;
-  private skillButtons: Phaser.GameObjects.Text[] = [];
-  private itemButtons: Phaser.GameObjects.Text[] = [];
-  private endTurnButton?: Phaser.GameObjects.Text;
-  private fleeButton?: Phaser.GameObjects.Text;
+  private commandTab: CommandTab = 'actions';
+  private commandTabButtons: CommandTabButton[] = [];
+  private commandPanelBackground?: Phaser.GameObjects.Graphics;
+  private commandContentBackground?: Phaser.GameObjects.Graphics;
+  private commandRows: CommandRow[] = [];
   private targetPrompt?: Phaser.GameObjects.Text;
   private targetButtons: TargetButton[] = [];
   private outcomeHandled = false;
@@ -181,13 +207,6 @@ export class Battle extends Phaser.Scene {
       this.actorCards[enemyId] = this.createActorCard(actor);
     }
 
-    this.endTurnButton = this.add
-      .text(layout.endTurnX, layout.endTurnY, '[End Turn]', { color: '#7c5cff' })
-      .setInteractive({ useHandCursor: true });
-    this.endTurnButton.on('pointerdown', () => {
-      if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
-      void this.handleEndTurn();
-    });
   }
 
   private createActorCard(actor: Actor): ActorCardElements {
@@ -278,62 +297,302 @@ export class Battle extends Phaser.Scene {
   }
 
   private renderActions() {
-    for (const btn of this.skillButtons) btn.destroy();
-    for (const btn of this.itemButtons) btn.destroy();
-    if (this.fleeButton) {
-      this.fleeButton.destroy();
-      this.fleeButton = undefined;
+    for (const row of this.commandRows) {
+      row.container.destroy(true);
     }
-    this.skillButtons = [];
-    this.itemButtons = [];
+    this.commandRows = [];
 
-    const layout = this.layout ?? this.computeLayout();
-    this.fleeButton = this.add
-      .text(layout.endTurnX - 120, layout.endTurnY, '[Flee]', { color: '#7c5cff' })
-      .setInteractive({ useHandCursor: true });
-    this.fleeButton.on('pointerdown', () => {
-      if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
-      void this.handleFlee();
-    });
+    if (!this.commandPanelBackground) {
+      this.commandPanelBackground = this.add.graphics().setDepth(2).setScrollFactor(0);
+    }
+    if (!this.commandContentBackground) {
+      this.commandContentBackground = this.add.graphics().setDepth(3).setScrollFactor(0);
+    }
 
-    const skillX = layout.skillColumnX;
-    let skillY = layout.commandsY;
+    if (!this.commandTabButtons.length) {
+      const tabDefs: Array<{ key: CommandTab; label: string }> = [
+        { key: 'actions', label: 'Actions' },
+        { key: 'skills', label: 'Skills' },
+        { key: 'items', label: 'Items' },
+      ];
+      for (const def of tabDefs) {
+        const container = this.add.container(0, 0);
+        container.setDepth(4).setScrollFactor(0);
+        const background = this.add.graphics();
+        container.add(background);
+        const hitArea = this.add.rectangle(0, 0, 10, 10, 0xffffff, 0).setOrigin(0, 0);
+        hitArea.setInteractive({ useHandCursor: true });
+        container.add(hitArea);
+        const label = this.add.text(0, 0, def.label, {
+          color: '#e6e8ef',
+          fontSize: '14px',
+          fontStyle: 'bold',
+        });
+        container.add(label);
+        hitArea.on('pointerdown', () => {
+          if (!hitArea.input?.enabled) return;
+          if (this.commandTab === def.key) return;
+          this.commandTab = def.key;
+          const currentLayout = this.layout ?? this.computeLayout();
+          this.layoutCommandPanel(currentLayout);
+          this.refreshCommandAvailability();
+        });
+        this.commandTabButtons.push({ key: def.key, container, background, hitArea, label });
+      }
+    }
+
+    const actions: Array<{ label: string; icon: string; handler: () => void }> = [
+      { label: 'End Turn', icon: 'ACT', handler: () => void this.handleEndTurn() },
+      { label: 'Flee', icon: 'ACT', handler: () => void this.handleFlee() },
+    ];
+    for (const action of actions) {
+      this.createCommandRow('actions', action.label, action.icon, undefined, action.handler);
+    }
+
+    const skillsRegistry = Skills();
     for (const id of this.profile.equippedSkills) {
-      const skill = Skills()[id];
+      const skill = skillsRegistry[id];
       if (!skill) continue;
-      const label = `[Skill] ${skill.name}`;
-      const text = this.add
-        .text(skillX, skillY, label, { color: '#7c5cff' })
-        .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => {
-        if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+      const detail = this.describeCost(skill.costs);
+      this.createCommandRow('skills', skill.name, 'SKL', detail, () => {
         void this.handleSkill(skill);
       });
-      this.skillButtons.push(text);
-      skillY += 24;
     }
 
-    const stackItems = layout.itemColumnX <= skillX + 24;
-    const itemX = stackItems ? skillX : layout.itemColumnX;
-    let itemY = stackItems
-      ? (this.skillButtons.length ? skillY + 16 : layout.commandsY)
-      : layout.commandsY;
+    const itemsRegistry = Items();
     for (const entry of this.state.inventory) {
-      const item = Items()[entry.id];
+      if (entry.qty <= 0) continue;
+      const item = itemsRegistry[entry.id];
       if (!item) continue;
-      const label = `[Item] ${item.name} x${entry.qty}`;
-      const text = this.add
-        .text(itemX, itemY, label, { color: '#7c5cff' })
-        .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => {
-        if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+      const detail = `x${entry.qty}`;
+      this.createCommandRow('items', item.name, 'ITM', detail, () => {
         void this.handleItem(item);
       });
-      this.itemButtons.push(text);
-      itemY += 24;
     }
 
+    const layout = this.layout ?? this.computeLayout();
+    this.layoutCommandPanel(layout);
     this.refreshCommandAvailability();
+  }
+
+  private createCommandRow(
+    tab: CommandTab,
+    label: string,
+    icon: string,
+    detail?: string,
+    onClick?: () => void,
+  ) {
+    const container = this.add.container(0, 0);
+    container.setDepth(5).setScrollFactor(0);
+    const background = this.add.graphics();
+    container.add(background);
+    const hitArea = this.add.rectangle(0, 0, 10, 10, 0xffffff, 0).setOrigin(0, 0);
+    if (onClick) {
+      hitArea.setInteractive({ useHandCursor: true });
+    }
+    container.add(hitArea);
+    const iconBackground = this.add.graphics();
+    container.add(iconBackground);
+    const iconText = this.add.text(0, 0, icon.toUpperCase(), {
+      color: '#cfd3ec',
+      fontSize: '12px',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    container.add(iconText);
+    const text = this.add.text(0, 0, label, {
+      color: '#e6e8ef',
+      fontSize: '14px',
+    });
+    container.add(text);
+    let detailText: Phaser.GameObjects.Text | undefined;
+    if (detail) {
+      detailText = this.add.text(0, 0, detail, {
+        color: '#8b8fa3',
+        fontSize: '12px',
+      });
+      container.add(detailText);
+    }
+    if (onClick) {
+      hitArea.on('pointerdown', () => {
+        if (!hitArea.input?.enabled) return;
+        onClick();
+      });
+    }
+    const row: CommandRow = {
+      tab,
+      container,
+      background,
+      hitArea,
+      iconBackground,
+      iconText,
+      label: text,
+      detail: detailText,
+      onClick,
+    };
+    this.commandRows.push(row);
+    return row;
+  }
+
+  private describeCost(costs: RuntimeCost): string {
+    const parts: string[] = [];
+    if (costs.mp > 0) parts.push(`MP ${costs.mp}`);
+    if (costs.sta > 0) parts.push(`STA ${costs.sta}`);
+    if (costs.cooldown > 0) parts.push(`${costs.cooldown}t CD`);
+    if (typeof costs.charges === 'number' && costs.charges > 0) {
+      parts.push(`${costs.charges} use${costs.charges > 1 ? 's' : ''}`);
+    }
+    return parts.length ? parts.join(' · ') : 'Free';
+  }
+
+  private layoutCommandPanel(layout: LayoutMetrics) {
+    if (!this.commandPanelBackground || !this.commandContentBackground) {
+      return;
+    }
+    const panelRect = layout.commandPanel;
+    const hasPanel = panelRect.width > 0 && panelRect.height > 0;
+    this.commandPanelBackground.setVisible(hasPanel);
+    this.commandPanelBackground.clear();
+    if (hasPanel) {
+      const panelRadius = 16;
+      this.commandPanelBackground.fillStyle(0x161b33, 0.94);
+      this.commandPanelBackground.fillRoundedRect(
+        panelRect.x,
+        panelRect.y,
+        panelRect.width,
+        panelRect.height,
+        panelRadius,
+      );
+      this.commandPanelBackground.lineStyle(2, 0x272f52, 0.7);
+      this.commandPanelBackground.strokeRoundedRect(
+        panelRect.x,
+        panelRect.y,
+        panelRect.width,
+        panelRect.height,
+        panelRadius,
+      );
+    }
+
+    const contentRect = layout.commandContent;
+    const hasContent = contentRect.width > 0 && contentRect.height > 0;
+    this.commandContentBackground.setVisible(hasContent);
+    this.commandContentBackground.clear();
+    if (hasContent) {
+      const contentRadius = 12;
+      this.commandContentBackground.fillStyle(0x10142b, 0.92);
+      this.commandContentBackground.fillRoundedRect(
+        contentRect.x,
+        contentRect.y,
+        contentRect.width,
+        contentRect.height,
+        contentRadius,
+      );
+      this.commandContentBackground.lineStyle(1.5, 0x21284b, 0.7);
+      this.commandContentBackground.strokeRoundedRect(
+        contentRect.x,
+        contentRect.y,
+        contentRect.width,
+        contentRect.height,
+        contentRadius,
+      );
+    }
+
+    const tabsRect = layout.commandTabs;
+    const tabCount = this.commandTabButtons.length;
+    const spacing = Math.max(0, Math.min(layout.commandTabSpacing, tabsRect.width));
+    const tabHeight = Math.max(0, tabsRect.height);
+    if (!hasPanel || tabCount === 0 || tabHeight <= 0 || tabsRect.width <= 0) {
+      for (const button of this.commandTabButtons) {
+        button.container.setVisible(false);
+      }
+    } else {
+      let x = tabsRect.x;
+      const widthAvailable = Math.max(0, tabsRect.width - spacing * (tabCount - 1));
+      const baseWidth = tabCount > 0 ? widthAvailable / tabCount : widthAvailable;
+      const tabWidth = Math.max(1, baseWidth);
+      for (const [index, button] of this.commandTabButtons.entries()) {
+        button.container.setVisible(true);
+        button.container.setPosition(x, tabsRect.y);
+        button.container.setDepth(4);
+        button.background.clear();
+        const radius = {
+          tl: index === 0 ? 12 : 6,
+          bl: index === 0 ? 12 : 6,
+          tr: index === tabCount - 1 ? 12 : 6,
+          br: index === tabCount - 1 ? 12 : 6,
+        };
+        const active = button.key === this.commandTab;
+        const fill = active ? 0x2f3659 : 0x1a1f3d;
+        const stroke = active ? 0x7c5cff : 0x2a3052;
+        button.background.fillStyle(fill, active ? 1 : 0.9);
+        button.background.fillRoundedRect(0, 0, tabWidth, tabHeight, radius);
+        button.background.lineStyle(1.5, stroke, active ? 1 : 0.7);
+        button.background.strokeRoundedRect(0, 0, tabWidth, tabHeight, radius);
+        button.hitArea.setPosition(0, 0);
+        button.hitArea.setSize(tabWidth, tabHeight);
+        button.hitArea.setDisplaySize(tabWidth, tabHeight);
+        button.label.setColor(active ? '#e6e8ef' : '#8b8fa3');
+        button.label.setPosition(tabWidth / 2 - button.label.width / 2, tabHeight / 2 - button.label.height / 2);
+        x += tabWidth + spacing;
+      }
+    }
+
+    const activeRows = this.commandRows.filter((row) => row.tab === this.commandTab);
+    const rowHeight = Math.max(32, layout.commandRowHeight);
+    const rowSpacing = Math.max(4, layout.commandRowSpacing);
+    const iconWidth = Math.max(
+      32,
+      Math.min(layout.commandIconWidth, Math.max(0, contentRect.width - textPadding * 3)),
+    );
+    const textPadding = Math.max(8, layout.commandTextPadding);
+    let y = contentRect.y + textPadding;
+
+    for (const row of activeRows) {
+      const visible = hasContent && hasPanel;
+      row.container.setVisible(visible);
+      if (!visible) continue;
+      row.container.setPosition(contentRect.x, y);
+      row.container.setDepth(5);
+      row.background.clear();
+      const rowRadius = 12;
+      row.background.fillStyle(0x1b2140, 0.95);
+      row.background.fillRoundedRect(0, 0, contentRect.width, rowHeight, rowRadius);
+      row.background.lineStyle(1.5, 0x2a3154, 0.7);
+      row.background.strokeRoundedRect(0, 0, contentRect.width, rowHeight, rowRadius);
+      row.hitArea.setPosition(0, 0);
+      row.hitArea.setSize(contentRect.width, rowHeight);
+      row.hitArea.setDisplaySize(contentRect.width, rowHeight);
+      const iconHeight = Math.max(24, rowHeight - textPadding * 2);
+      const iconX = textPadding;
+      const iconY = (rowHeight - iconHeight) / 2;
+      row.iconBackground.clear();
+      row.iconBackground.fillStyle(0x252c4b, 1);
+      row.iconBackground.fillRoundedRect(iconX, iconY, iconWidth, iconHeight, 8);
+      row.iconText.setPosition(
+        iconX + iconWidth / 2 - row.iconText.width / 2,
+        iconY + iconHeight / 2 - row.iconText.height / 2,
+      );
+      const labelMaxWidth = Math.max(
+        0,
+        contentRect.width - iconX - iconWidth - textPadding * 3 - (row.detail ? row.detail.width : 0),
+      );
+      row.label.setMaxWidth(labelMaxWidth);
+      row.label.setWordWrapWidth(Math.max(0, labelMaxWidth));
+      row.label.setPosition(iconX + iconWidth + textPadding, rowHeight / 2 - row.label.height / 2);
+      if (row.detail) {
+        row.detail.setPosition(
+          contentRect.width - textPadding - row.detail.width,
+          rowHeight / 2 - row.detail.height / 2,
+        );
+      }
+      y += rowHeight + rowSpacing;
+    }
+
+    for (const row of this.commandRows) {
+      if (row.tab !== this.commandTab) {
+        row.container.setVisible(false);
+      }
+    }
   }
 
   private async handleSkill(skill: RuntimeSkill) {
@@ -680,15 +939,35 @@ export class Battle extends Phaser.Scene {
     let logY = stageRect.y + stageRect.height - 120;
     logY = Math.min(logY, footerRect.y - 120);
     logY = Math.max(stageRect.y + 20, logY);
-    const commandsY = footerRect.y + 16;
-    const skillColumnX = stageRect.x + 16;
-    let itemColumnX = stageRect.x + 220;
-    if (itemColumnX + 160 > stageRight) {
-      itemColumnX = stageRect.x + Math.max(16, Math.min(stageRect.width - 160, Math.round(stageRect.width / 2) + 16));
-    }
-    if (itemColumnX + 120 > stageRight) {
-      itemColumnX = skillColumnX;
-    }
+
+    const commandPanelPadding = 16;
+    const commandPanel: LayoutRect = {
+      x: footerRect.x + commandPanelPadding,
+      y: footerRect.y + commandPanelPadding,
+      width: Math.max(0, footerRect.width - commandPanelPadding * 2),
+      height: Math.max(0, footerRect.height - commandPanelPadding * 2),
+    };
+    const baseTabHeight = 36;
+    const commandTabsHeight = Math.min(commandPanel.height, Math.max(30, Math.min(40, baseTabHeight)));
+    const commandTabs: LayoutRect = {
+      x: commandPanel.x,
+      y: commandPanel.y,
+      width: commandPanel.width,
+      height: commandTabsHeight,
+    };
+    const commandTabSpacing = Math.max(10, Math.min(18, Math.round(commandPanel.width * 0.05)));
+    const contentGap = Math.max(12, Math.round(commandPanel.height * 0.06));
+    const commandContentTop = commandTabs.y + commandTabs.height + contentGap;
+    const commandContent: LayoutRect = {
+      x: commandPanel.x,
+      y: commandContentTop,
+      width: commandPanel.width,
+      height: Math.max(0, commandPanel.y + commandPanel.height - commandContentTop),
+    };
+    const commandRowHeight = Math.max(42, Math.min(60, Math.round(Math.max(44, commandPanel.height * 0.28))));
+    const commandRowSpacing = Math.max(8, Math.round(commandRowHeight * 0.25));
+    const commandIconWidth = Math.max(48, Math.min(96, Math.round(commandPanel.width * 0.22)));
+    const commandTextPadding = 14;
     const computeCardWidth = (available: number) => {
       const safe = Math.max(0, available);
       if (safe <= 0) return 0;
@@ -736,8 +1015,6 @@ export class Battle extends Phaser.Scene {
     const enemySpacing = enemyCardHeight + cardPadding;
     const targetXCandidate = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - 160;
     const targetX = Math.max(stageRect.x + 16, targetXCandidate);
-    const endTurnX = Math.max(skillColumnX, footerRect.x + footerRect.width - 140);
-    const endTurnY = footerRect.y + Math.max(32, footerRect.height - 48);
     const rightColumnX = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight + 16;
 
     return {
@@ -748,12 +1025,15 @@ export class Battle extends Phaser.Scene {
       rightColumnX,
       logWidth,
       logY,
-      endTurnX,
-      endTurnY,
       targetX,
-      skillColumnX,
-      itemColumnX,
-      commandsY,
+      commandPanel,
+      commandTabs,
+      commandContent,
+      commandTabSpacing,
+      commandRowHeight,
+      commandRowSpacing,
+      commandIconWidth,
+      commandTextPadding,
       playerCard,
       enemyCard: { x: enemyColumnX, startY: enemyStartY, width: Math.max(0, enemyCardWidth), height: enemyCardHeight, spacing: enemySpacing },
       cardLayout,
@@ -847,27 +1127,7 @@ export class Battle extends Phaser.Scene {
     if (this.headerTitle) {
       this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
     }
-    if (this.endTurnButton) {
-      this.endTurnButton.setPosition(layout.endTurnX, layout.endTurnY);
-    }
-    if (this.fleeButton) {
-      this.fleeButton.setPosition(layout.endTurnX - 120, layout.endTurnY);
-    }
-
-    let skillY = layout.commandsY;
-    for (const btn of this.skillButtons) {
-      btn.setPosition(layout.skillColumnX, skillY);
-      skillY += 24;
-    }
-    const stackItems = layout.itemColumnX <= layout.skillColumnX + 24;
-    const itemX = stackItems ? layout.skillColumnX : layout.itemColumnX;
-    let itemY = stackItems
-      ? (this.skillButtons.length ? skillY + 16 : layout.commandsY)
-      : layout.commandsY;
-    for (const btn of this.itemButtons) {
-      btn.setPosition(itemX, itemY);
-      itemY += 24;
-    }
+    this.layoutCommandPanel(layout);
     if (this.targetPrompt) {
       const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
       this.targetPrompt.setPosition(layout.targetX, baseY);
@@ -889,41 +1149,34 @@ export class Battle extends Phaser.Scene {
   }
 
   private refreshCommandAvailability() {
-    const enabled = !this.state.ended && this.isPlayerTurn() && !this.busy && !this.targetSelectionActive;
-    for (const btn of this.skillButtons) {
-      if (enabled) {
-        btn.setInteractive({ useHandCursor: true });
-        btn.setAlpha(1);
+    const canUseCommands =
+      !this.state.ended && this.isPlayerTurn() && !this.busy && !this.targetSelectionActive;
+    const canSwitchTabs = !this.state.ended && !this.busy && !this.targetSelectionActive;
+    for (const button of this.commandTabButtons) {
+      if (canSwitchTabs) {
+        if (!button.hitArea.input?.enabled) {
+          button.hitArea.setInteractive({ useHandCursor: true });
+        }
+        button.container.setAlpha(1);
       } else {
-        btn.disableInteractive();
-        btn.setAlpha(0.6);
+        button.hitArea.disableInteractive();
+        button.container.setAlpha(button.key === this.commandTab ? 0.8 : 0.6);
       }
     }
-    for (const btn of this.itemButtons) {
-      if (enabled) {
-        btn.setInteractive({ useHandCursor: true });
-        btn.setAlpha(1);
+    for (const row of this.commandRows) {
+      const interactive = !!row.onClick && canUseCommands && row.tab === this.commandTab;
+      if (interactive) {
+        if (!row.hitArea.input?.enabled) {
+          row.hitArea.setInteractive({ useHandCursor: true });
+        }
+        row.container.setAlpha(1);
       } else {
-        btn.disableInteractive();
-        btn.setAlpha(0.6);
-      }
-    }
-    if (this.endTurnButton) {
-      if (enabled) {
-        this.endTurnButton.setInteractive({ useHandCursor: true });
-        this.endTurnButton.setAlpha(1);
-      } else {
-        this.endTurnButton.disableInteractive();
-        this.endTurnButton.setAlpha(0.6);
-      }
-    }
-    if (this.fleeButton) {
-      if (enabled) {
-        this.fleeButton.setInteractive({ useHandCursor: true });
-        this.fleeButton.setAlpha(1);
-      } else {
-        this.fleeButton.disableInteractive();
-        this.fleeButton.setAlpha(0.6);
+        row.hitArea.disableInteractive();
+        if (row.tab === this.commandTab) {
+          row.container.setAlpha(row.onClick ? 0.6 : 0.75);
+        } else {
+          row.container.setAlpha(0.5);
+        }
       }
     }
   }
