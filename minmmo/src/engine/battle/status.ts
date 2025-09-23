@@ -699,6 +699,11 @@ function applyHookEffect(
     return
   }
 
+  if (effect.kind === 'preventAction') {
+    ctx.control?.preventAction(effect.message)
+    return
+  }
+
   const resolved = resolveEffectValue(effect, source, target, ctx)
   if (resolved.kind === 'none') {
     return
@@ -885,4 +890,4 @@ function pushLog(state: BattleState, message: string) {
   state.log.push(message)
 }
 
-const SUPPORTED_KINDS = new Set<RuntimeEffect['kind']>(['damage', 'heal', 'resource'])
+const SUPPORTED_KINDS = new Set<RuntimeEffect['kind']>(['damage', 'heal', 'resource', 'preventAction'])

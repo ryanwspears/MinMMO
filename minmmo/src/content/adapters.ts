@@ -266,6 +266,7 @@ function compileEffect(effect: Effect, scope: string): RuntimeEffect {
     statusTurns: effect.statusTurns,
     cleanseTags: effect.cleanseTags ? [...effect.cleanseTags] : undefined,
     shieldId: effect.shieldId,
+    message: effect.message,
     onlyIf: effect.onlyIf ? deepClone(effect.onlyIf) : undefined,
     selector,
     value,
