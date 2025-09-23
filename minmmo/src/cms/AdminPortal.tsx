@@ -62,6 +62,7 @@ const effectKinds = [
   'summon',
   'giveItem',
   'removeItem',
+  'preventAction',
 ] as const satisfies readonly EffectKind[];
 const valueTypes = ['flat', 'percent', 'formula'] as const satisfies readonly ValueType[];
 const resources = ['hp', 'sta', 'mp'] as const satisfies readonly Resource[];
