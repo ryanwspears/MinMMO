@@ -1,58 +1,60 @@
+import type { GameConfig } from './schema';
+import { validateAndRepair } from '@content/validate';
 
-import { DEFAULTS } from './defaults'
-import type { GameConfig } from './schema'
+const KEY = 'minmmo:config';
+const storage: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage;
+let current: GameConfig = validateAndRepair({});
+const subs = new Set<(cfg: GameConfig) => void>();
 
-const KEY = 'minmmo:config'
-let current: GameConfig = DEFAULTS
-const subs = new Set<(cfg: GameConfig)=>void>()
-
-function deepMerge<T>(base: T, patch: Partial<T>): T {
-  if (Array.isArray(base)) return (patch as any) ?? base as any
-  if (typeof base === 'object' && base) {
-    const out: any = { ...base }
-    for (const k of Object.keys(patch || {})) {
-      const pv: any = (patch as any)[k]
-      const bv: any = (base as any)[k]
-      out[k] = (bv && typeof bv === 'object' && !Array.isArray(bv)) ? deepMerge(bv, pv || {}) : (pv ?? bv)
-    }
-    return out
+function write(cfg: GameConfig) {
+  current = cfg;
+  if (storage) {
+    storage.setItem(KEY, JSON.stringify(cfg));
   }
-  return (patch as any) ?? base
+  for (const fn of subs) fn(current);
 }
 
 export function load(): GameConfig {
   try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) {
-      current = DEFAULTS
-    } else {
-      const parsed = JSON.parse(raw)
-      current = deepMerge(DEFAULTS, parsed)
+    if (!storage) {
+      current = validateAndRepair({});
+      return current;
     }
+    const raw = storage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const repaired = validateAndRepair(parsed);
+    current = repaired;
+    storage.setItem(KEY, JSON.stringify(repaired));
   } catch {
-    current = DEFAULTS
+    const repaired = validateAndRepair({});
+    current = repaired;
+    if (storage) {
+      storage.setItem(KEY, JSON.stringify(repaired));
+    }
   }
-  return current
+  return current;
 }
 
 export function save(cfg: GameConfig) {
-  current = deepMerge(DEFAULTS, cfg)
-  localStorage.setItem(KEY, JSON.stringify(current))
-  for (const fn of subs) fn(current)
+  const repaired = validateAndRepair(cfg);
+  write(repaired);
 }
 
 export function exportConfig(): string {
-  return JSON.stringify(current, null, 2)
+  return JSON.stringify(current, null, 2);
 }
 
 export function importConfig(json: string) {
-  const parsed = JSON.parse(json)
-  save(parsed)
+  const parsed = JSON.parse(json);
+  const repaired = validateAndRepair(parsed);
+  write(repaired);
 }
 
-export function subscribe(fn: (cfg: GameConfig)=>void) {
-  subs.add(fn)
-  return () => subs.delete(fn)
+export function subscribe(fn: (cfg: GameConfig) => void) {
+  subs.add(fn);
+  return () => {
+    subs.delete(fn);
+  };
 }
 
-export const CONFIG = () => current
+export const CONFIG = () => current;

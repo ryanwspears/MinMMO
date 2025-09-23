@@ -2,7 +2,42 @@
 export type Targeting = 'self' | 'single' | 'all' | 'random' | 'lowest' | 'highest' | 'condition'
 export type Resource = 'hp' | 'sta' | 'mp'
 
-export interface Status { id: string; turns: number; stacks?: number }
+export interface StatusModifierSnapshot {
+  atk?: number
+  def?: number
+  damageTakenPct?: Record<string, number>
+  damageDealtPct?: Record<string, number>
+  resourceRegenPerTurn?: Partial<Record<Resource, number>>
+  dodgeBonus?: number
+  critChanceBonus?: number
+}
+
+export interface Status { id: string; turns: number; stacks?: number; appliedModifiers?: StatusModifierSnapshot }
+
+export interface ActorStatusModifierCache {
+  damageTakenPct: Record<string, number>
+  damageDealtPct: Record<string, number>
+  resourceRegenPerTurn: Partial<Record<Resource, number>>
+  dodgeBonus: number
+  critChanceBonus: number
+}
+
+export interface ShieldState {
+  id: string
+  hp: number
+  element?: string
+}
+
+export interface TauntState {
+  sourceId: string
+  turns: number
+}
+
+export interface ChargeState {
+  remaining: number
+  max: number
+}
+
 export interface Stats  {
   maxHp:number; hp:number;
   maxSta:number; sta:number;
@@ -13,6 +48,7 @@ export interface Stats  {
 export interface Actor {
   id: string; name: string; color?: number; clazz?: string;
   stats: Stats; statuses: Status[]; alive: boolean; tags: string[];
+  statusModifiers?: ActorStatusModifierCache;
   meta?: { skillIds?: string[]; itemDrops?: { id:string; qty:number }[] };
 }
 
@@ -24,6 +60,10 @@ export interface BattleState {
   sidePlayer: string[]; sideEnemy: string[];
   inventory: InventoryEntry[];
   log: string[];
+  cooldowns: Record<string, Record<string, number>>;
+  charges: Record<string, Record<string, ChargeState>>;
+  shields: Record<string, Record<string, ShieldState>>;
+  taunts: Record<string, TauntState | undefined>;
   ended?: { reason: 'fled' | 'defeat' | 'victory' };
 }
 
