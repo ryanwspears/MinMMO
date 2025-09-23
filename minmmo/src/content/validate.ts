@@ -118,6 +118,7 @@ const EffectSchema = z
     element: optionalString(),
     canMiss: coerceBoolean(),
     canCrit: coerceBoolean(),
+    sharedAccuracyRoll: coerceBoolean(),
     resource: enumOptional(resources),
     stat: enumOptional(statKeys),
     statusId: optionalString(),

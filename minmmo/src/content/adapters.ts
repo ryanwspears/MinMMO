@@ -106,9 +106,10 @@ export interface RuntimeValue {
 }
 
 export interface RuntimeEffect
-  extends Omit<Effect, 'valueType' | 'amount' | 'percent' | 'formula' | 'selector'> {
+  extends Omit<Effect, 'valueType' | 'amount' | 'percent' | 'formula' | 'selector' | 'sharedAccuracyRoll'> {
   selector?: RuntimeTargetSelector;
   value: RuntimeValue;
+  sharedAccuracyRoll: boolean;
 }
 
 export interface RuntimeActionBase
@@ -260,6 +261,7 @@ function compileEffect(effect: Effect, scope: string): RuntimeEffect {
     element: effect.element,
     canMiss: effect.canMiss ?? false,
     canCrit: effect.canCrit ?? false,
+    sharedAccuracyRoll: effect.sharedAccuracyRoll ?? true,
     resource: effect.resource,
     stat: effect.stat,
     statusId: effect.statusId,

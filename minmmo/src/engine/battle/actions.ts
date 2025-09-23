@@ -117,6 +117,8 @@ type DamageOptions = {
 
 type ItemCost = { id: string; qty: number; consume: boolean }
 
+type AccuracyCache = Map<string, boolean>
+
 export function evaluateActionTargets(
   state: BattleState,
   action: RuntimeAction,
@@ -287,6 +289,8 @@ function executeAction(
 
   pushLog(state, `${user.name} used ${action.name}.`)
 
+  const accuracyCache: AccuracyCache = new Map()
+
   for (const effect of action.effects ?? []) {
     const selector = effect.selector ?? action.targeting
     const targets = effect.selector
@@ -298,7 +302,7 @@ function executeAction(
     }
 
     for (const target of targets) {
-      applyEffect(state, action, effect, user, target)
+      applyEffect(state, action, effect, user, target, accuracyCache)
       if (state.ended) {
         break
       }
@@ -386,6 +390,7 @@ function applyEffect(
   effect: RuntimeEffect,
   user: Actor,
   target: Actor,
+  accuracyCache: AccuracyCache,
 ) {
   if (effect.onlyIf && !matchesFilter(target, effect.onlyIf)) {
     return
@@ -398,13 +403,17 @@ function applyEffect(
 
   switch (effect.kind) {
     case 'damage': {
-      if (effect.canMiss) {
-        const roll = nextRandom(state)
-        const chance = clamp(hitChance(user, target, ruleCtx), 0, 1)
-        if (roll > chance) {
-          pushLog(state, `${user.name}'s ${action.name} missed ${target.name}.`)
-          return
-        }
+      const hit = ensureEffectHit(
+        accuracyCache,
+        state,
+        user,
+        target,
+        effect,
+        ruleCtx,
+        () => pushLog(state, `${user.name}'s ${action.name} missed ${target.name}.`),
+      )
+      if (!hit) {
+        return
       }
 
       const element = effect.element ?? action.element
@@ -448,13 +457,17 @@ function applyEffect(
         break
       }
 
-      if (effect.canMiss) {
-        const roll = nextRandom(state)
-        const chance = clamp(hitChance(user, target, ruleCtx), 0, 1)
-        if (roll > chance) {
-          pushLog(state, `${user.name}'s ${action.name} failed to affect ${target.name}.`)
-          return
-        }
+      const hit = ensureEffectHit(
+        accuracyCache,
+        state,
+        user,
+        target,
+        effect,
+        ruleCtx,
+        () => pushLog(state, `${user.name}'s ${action.name} failed to affect ${target.name}.`),
+      )
+      if (!hit) {
+        return
       }
 
       const turns = effect.statusTurns ?? Math.round(amount)
@@ -527,6 +540,41 @@ function applyEffect(
       // unsupported kinds will be ignored in this phase
       break
   }
+}
+
+function ensureEffectHit(
+  cache: AccuracyCache,
+  state: BattleState,
+  user: Actor,
+  target: Actor,
+  effect: RuntimeEffect,
+  ruleCtx: RuleContext,
+  onMiss: () => void,
+): boolean {
+  if (!effect.canMiss) {
+    return true
+  }
+
+  if (effect.sharedAccuracyRoll) {
+    const cached = cache.get(target.id)
+    if (cached !== undefined) {
+      return cached
+    }
+  }
+
+  const chance = clamp(hitChance(user, target, ruleCtx), 0, 1)
+  const roll = nextRandom(state)
+  const hit = roll <= chance
+
+  if (effect.sharedAccuracyRoll) {
+    cache.set(target.id, hit)
+  }
+
+  if (!hit) {
+    onMiss()
+  }
+
+  return hit
 }
 
 function resolveValue(
