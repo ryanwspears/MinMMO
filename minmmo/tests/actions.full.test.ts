@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeEffect, RuntimeItem, RuntimeSkill, RuntimeTargetSelector } from '@content/adapters'
 import { applyStatus } from '@engine/battle/status'
-import { useItem, useSkill, endTurn, resolveActionTargetIds } from '@engine/battle/actions'
+import {
+  useItem,
+  useSkill,
+  endTurn,
+  resolveActionTargetIds,
+  collectUsableTargets,
+} from '@engine/battle/actions'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
 import { DEFAULTS } from '@config/defaults'
@@ -311,6 +317,61 @@ describe('battle actions advanced behaviour', () => {
     expect(aiResult.ok).toBe(true)
     expect(aiState.actors[burningPlayer.id]?.stats.hp).toBeLessThan(100)
     expect(aiState.actors[otherPlayer.id]?.stats.hp).toBe(100)
+  })
+
+  it('resolves canUse-gated random targets deterministically for players and enemies', () => {
+    const randomSkill = makeSkill({
+      id: 'precise-shot',
+      name: 'Precise Shot',
+      targeting: makeSelector({ side: 'enemy', mode: 'random', count: 1 }),
+      canUse: { test: { key: 'hpPct', op: 'lte', value: 0.5 } },
+      effects: [{ ...flatEffect('resource', -3), resource: 'mp' }],
+    })
+
+    const makeEnemies = () => [makeActor('E-healthy'), makeActor('E-wounded', { hp: 40 })]
+
+    const playerCollectionState = makeState([makeActor('P1')], makeEnemies())
+    const playerActor = playerCollectionState.actors['P1']!
+    const playerCollection = collectUsableTargets(playerCollectionState, randomSkill, playerActor)
+    expect(playerCollection.ok).toBe(true)
+    if (playerCollection.ok) {
+      expect(playerCollection.targets.map((actor) => actor.id)).toEqual(['E-wounded'])
+    }
+
+    const playerUseStateA = makeState([makeActor('P1')], makeEnemies())
+    const playerUseStateB = makeState([makeActor('P1')], makeEnemies())
+    const playerResultA = useSkill(playerUseStateA, randomSkill, 'P1')
+    const playerResultB = useSkill(playerUseStateB, randomSkill, 'P1')
+    expect(playerResultA.ok).toBe(true)
+    expect(playerResultB.ok).toBe(true)
+    expect(playerUseStateA.actors['E-wounded']?.stats.mp).toBe(12)
+    expect(playerUseStateB.actors['E-wounded']?.stats.mp).toBe(12)
+    expect(playerUseStateA.actors['E-healthy']?.stats.mp).toBe(15)
+    expect(playerUseStateB.actors['E-healthy']?.stats.mp).toBe(15)
+    expect(playerUseStateA.rngSeed).toBe(playerUseStateB.rngSeed)
+
+    const makePlayers = () => [makeActor('P-front'), makeActor('P-weak', { hp: 30 })]
+    const makeEnemy = () => makeActor('E-boss')
+
+    const enemyCollectionState = makeState(makePlayers(), [makeEnemy()])
+    const enemyActor = enemyCollectionState.actors['E-boss']!
+    const enemyCollection = collectUsableTargets(enemyCollectionState, randomSkill, enemyActor)
+    expect(enemyCollection.ok).toBe(true)
+    if (enemyCollection.ok) {
+      expect(enemyCollection.targets.map((actor) => actor.id)).toEqual(['P-weak'])
+    }
+
+    const enemyUseStateA = makeState(makePlayers(), [makeEnemy()])
+    const enemyUseStateB = makeState(makePlayers(), [makeEnemy()])
+    const enemyResultA = useSkill(enemyUseStateA, randomSkill, 'E-boss')
+    const enemyResultB = useSkill(enemyUseStateB, randomSkill, 'E-boss')
+    expect(enemyResultA.ok).toBe(true)
+    expect(enemyResultB.ok).toBe(true)
+    expect(enemyUseStateA.actors['P-weak']?.stats.mp).toBe(12)
+    expect(enemyUseStateB.actors['P-weak']?.stats.mp).toBe(12)
+    expect(enemyUseStateA.actors['P-front']?.stats.mp).toBe(15)
+    expect(enemyUseStateB.actors['P-front']?.stats.mp).toBe(15)
+    expect(enemyUseStateA.rngSeed).toBe(enemyUseStateB.rngSeed)
   })
 
   it('enforces charges on limited-use skills', () => {
