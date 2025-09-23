@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeEffect, RuntimeSkill, RuntimeStatusTemplate } from '@content/adapters'
-import { useSkill } from '@engine/battle/actions'
-import { applyStatus, tickEndOfTurn } from '@engine/battle/status'
+import { useSkill, endTurn } from '@engine/battle/actions'
+import { applyStatus, tickEndOfTurn, tickStartOfTurn } from '@engine/battle/status'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
 import { DEFAULTS } from '@config/defaults'
@@ -223,6 +223,51 @@ describe('status engine - damage over time', () => {
     applyStatus(state, actor.id, 'poison', 3)
     applyStatus(state, actor.id, 'poison', 3)
     expect(actor.statuses[0]?.stacks).toBe(3)
+  })
+
+  it('prevents actions when onTurnStart calls preventAction', () => {
+    registryMap.paralyze = statusTemplate({
+      id: 'paralyze',
+      name: 'Paralyze',
+      durationTurns: 1,
+      hooks: {
+        onApply: [],
+        onTurnStart: [
+          {
+            kind: 'damage',
+            value: {
+              kind: 'flat',
+              resolve: (_user, target, ctx) => {
+                ctx.control?.preventAction(`${target.name} is paralyzed!`)
+                return 0
+              },
+              rawAmount: 0,
+            },
+            canCrit: false,
+            canMiss: false,
+          } as RuntimeEffect,
+        ],
+        onTurnEnd: [],
+        onDealDamage: [],
+        onTakeDamage: [],
+        onExpire: [],
+      },
+    })
+
+    const player = makeActor('Hero', { hp: 30, maxHp: 30 })
+    const enemy = makeActor('Goblin', { hp: 20, maxHp: 20 })
+    enemy.tags = ['enemy']
+    const state = makeDuelState(player, enemy)
+
+    applyStatus(state, player.id, 'paralyze', 1)
+    const prevented = tickStartOfTurn(state, player.id)
+    expect(prevented).toBe(true)
+    expect(state.log[state.log.length - 1]).toBe(`${player.name} is paralyzed!`)
+
+    endTurn(state)
+    expect(state.order[state.current]).toBe(enemy.id)
+    expect(state.log.some((entry) => entry.includes(`${player.name} ended their turn.`))).toBe(true)
+    expect(state.log.some((entry) => entry.includes('Paralyze') && entry.includes('expired'))).toBe(true)
   })
 
   describe('status modifiers', () => {

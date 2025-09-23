@@ -4,6 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn, collectUsableTargets } from '@engine/battle/actions';
+import { tickStartOfTurn } from '@engine/battle/status';
 import { resolveTargets } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry, UseResult } from '@engine/battle/types';
 import {
@@ -60,6 +61,8 @@ export class Battle extends Phaser.Scene {
   private busy = false;
   private targetSelectionActive = false;
   private lastAnnouncedActor?: string;
+  private lastStartOfTurn?: { actorId: string; index: number; turn: number; prevented: boolean };
+  private autoSkippingPlayer = false;
 
   constructor() {
     super('Battle');
@@ -260,23 +263,75 @@ export class Battle extends Phaser.Scene {
     if (!actorId) return;
     const actor = this.state.actors[actorId];
     if (!actor) return;
-    this.announceActor(actor);
+    const canAct = this.announceActor(actor);
+    if (!canAct && this.state.sidePlayer.includes(actor.id)) {
+      void this.autoSkipPlayerTurn();
+    }
   }
 
-  private announceActor(actor: Actor) {
+  private announceActor(actor: Actor): boolean {
     if (!actor.alive) {
-      this.state.log.push(`${actor.name} cannot act.`);
-      return;
+      const message = `${actor.name} cannot act.`;
+      if (this.state.log[this.state.log.length - 1] !== message) {
+        this.state.log.push(message);
+      }
+      this.lastAnnouncedActor = actor.id;
+      return false;
     }
+
+    const canAct = this.evaluateStartOfTurn(actor);
+    if (!canAct) {
+      this.lastAnnouncedActor = actor.id;
+      return false;
+    }
+
     const isPlayer = this.state.sidePlayer.includes(actor.id);
     const message = isPlayer
       ? `${actor.name} is preparing to act.`
       : `${actor.name} prepares to act.`;
     if (this.lastAnnouncedActor === actor.id && this.state.log[this.state.log.length - 1] === message) {
-      return;
+      return true;
     }
     this.lastAnnouncedActor = actor.id;
     this.state.log.push(message);
+    return true;
+  }
+
+  private evaluateStartOfTurn(actor: Actor): boolean {
+    const snapshot = this.lastStartOfTurn;
+    if (
+      snapshot &&
+      snapshot.actorId === actor.id &&
+      snapshot.turn === this.state.turn &&
+      snapshot.index === this.state.current
+    ) {
+      return !snapshot.prevented;
+    }
+
+    const prevented = tickStartOfTurn(this.state, actor);
+    this.lastStartOfTurn = {
+      actorId: actor.id,
+      index: this.state.current,
+      turn: this.state.turn,
+      prevented,
+    };
+    return !prevented;
+  }
+
+  private async autoSkipPlayerTurn() {
+    if (this.autoSkippingPlayer || this.state.ended) {
+      return;
+    }
+    this.autoSkippingPlayer = true;
+    const previousBusy = this.busy;
+    this.busy = true;
+    this.refreshCommandAvailability();
+    this.clearTargetPicker();
+    await this.logPlayer.drain();
+    await this.advanceTurnAfterPlayer();
+    this.busy = previousBusy;
+    this.autoSkippingPlayer = false;
+    this.refreshCommandAvailability();
   }
 
   private needsManualTarget(selector: RuntimeSkill['targeting']): boolean {
@@ -492,13 +547,7 @@ export class Battle extends Phaser.Scene {
         continue;
       }
       const actor = this.state.actors[actorId];
-      if (!actor || !actor.alive) {
-        if (actor && !actor.alive) {
-          this.state.log.push(`${actor.name} cannot act.`);
-          this.renderState();
-          this.layoutUi();
-          await this.logPlayer.drain();
-        }
+      if (!actor) {
         endTurn(this.state);
         clampInventory(this.state.inventory);
         this.renderActions();
@@ -507,16 +556,55 @@ export class Battle extends Phaser.Scene {
         await this.logPlayer.drain();
         continue;
       }
-      const isEnemy = this.state.sideEnemy.includes(actorId);
-      if (!isEnemy) {
-        break;
+      if (!actor.alive) {
+        const message = `${actor.name} cannot act.`;
+        if (this.state.log[this.state.log.length - 1] !== message) {
+          this.state.log.push(message);
+        }
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
+        endTurn(this.state);
+        clampInventory(this.state.inventory);
+        this.renderActions();
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
+        continue;
       }
 
-      this.announceActor(actor);
+      const canAct = this.announceActor(actor);
       this.renderActions();
       this.renderState();
       this.layoutUi();
       await this.logPlayer.drain();
+
+      if (!canAct) {
+        this.refreshCommandAvailability();
+        this.checkOutcome();
+        if (this.state.ended) {
+          return;
+        }
+        endTurn(this.state);
+        clampInventory(this.state.inventory);
+        this.renderActions();
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
+        this.refreshCommandAvailability();
+        this.checkOutcome();
+        if (this.state.ended) {
+          return;
+        }
+        continue;
+      }
+
+      const isEnemy = this.state.sideEnemy.includes(actorId);
+      if (!isEnemy) {
+        this.refreshCommandAvailability();
+        this.checkOutcome();
+        return;
+      }
 
       this.executeEnemyTurn(actor);
       clampInventory(this.state.inventory);
@@ -535,30 +623,13 @@ export class Battle extends Phaser.Scene {
       this.renderState();
       this.layoutUi();
       await this.logPlayer.drain();
+      this.refreshCommandAvailability();
       this.checkOutcome();
       if (this.state.ended) {
         return;
       }
     }
 
-    if (this.state.ended) {
-      this.checkOutcome();
-      return;
-    }
-
-    const actorId = this.state.order[this.state.current];
-    const actor = actorId ? this.state.actors[actorId] : undefined;
-    if (actor && actor.alive && this.state.sidePlayer.includes(actorId)) {
-      this.announceActor(actor);
-      this.renderActions();
-      this.renderState();
-      this.layoutUi();
-      await this.logPlayer.drain();
-    } else {
-      this.renderActions();
-      this.renderState();
-      this.layoutUi();
-    }
     this.refreshCommandAvailability();
     this.checkOutcome();
   }

@@ -34,18 +34,25 @@ interface StatusEventContext {
   otherId?: string
 }
 
+interface StatusControl {
+  preventAction(message?: string): void
+  prevented: boolean
+}
+
 interface StatusFormulaContext extends FormulaContext {
   state: BattleState
   status: RuntimeStatusTemplate
   entry: ActiveStatus
   source: Actor
   event?: StatusEventContext
+  control?: StatusControl
 }
 
 interface HookOptions {
   other?: Actor
   amount?: number
   element?: string
+  control?: StatusControl
 }
 
 interface ShieldImpact {
@@ -134,6 +141,21 @@ export function applyStatus(
   })
 }
 
+export function tickStartOfTurn(state: BattleState, actorOrId: string | Actor): boolean {
+  const actor = typeof actorOrId === 'string' ? state.actors[actorOrId] : actorOrId
+  if (!actor || !actor.alive) {
+    return false
+  }
+
+  const control = createStatusControl(state, actor)
+  triggerStatusHooks(state, actor, 'onTurnStart', {
+    other: actor,
+    control,
+  })
+
+  return control.prevented
+}
+
 export function tickEndOfTurn(state: BattleState, actorOrId: string | Actor): void {
   const actor = typeof actorOrId === 'string' ? state.actors[actorOrId] : actorOrId
   if (!actor) {
@@ -185,7 +207,11 @@ export function triggerStatusHooks(
     if (!template) {
       continue
     }
-    runHookForEntry(state, actor, template, entry, hook, options)
+    const other = options.other ?? resolveSourceActor(state, entry.sourceId) ?? actor
+    runHookForEntry(state, actor, template, entry, hook, {
+      ...options,
+      other,
+    })
   }
 }
 
@@ -321,6 +347,23 @@ function tickTaunt(state: BattleState, actor: Actor) {
   }
 }
 
+function createStatusControl(state: BattleState, actor: Actor): StatusControl {
+  const control: StatusControl = {
+    prevented: false,
+    preventAction(message?: string) {
+      if (control.prevented) {
+        return
+      }
+      control.prevented = true
+      const text = message && message.trim().length > 0
+        ? message
+        : `${actor.name} is unable to act.`
+      pushLog(state, text)
+    },
+  }
+  return control
+}
+
 function runHookForEntry(
   state: BattleState,
   actor: Actor,
@@ -353,6 +396,7 @@ function runHookForEntry(
     status: template,
     entry,
     source,
+    control: options.control,
     event: {
       kind: hook,
       amount: options.amount,
