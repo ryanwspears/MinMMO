@@ -4,7 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn } from '@engine/battle/actions';
-import { resolveTargets, resolveTauntTargetId } from '@engine/battle/targeting';
+import { resolveTargets, matchesFilter } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
   PlayerProfile,
@@ -174,7 +174,12 @@ export class Battle extends Phaser.Scene {
     this.clearTargetPicker();
     const selector = skill.targeting;
     if (this.needsManualTarget(selector)) {
-      const targets = this.collectTargets(selector, this.playerId);
+      const targets = this.collectTargets(selector, this.playerId, skill.name);
+      if (!targets.length) {
+        this.renderState();
+        this.layoutUi();
+        return;
+      }
       this.promptForTarget(targets, (targetId) => {
         const result = useSkill(this.state, skill, this.playerId, [targetId]);
         this.afterAction({ autoAdvance: result.ok });
@@ -189,7 +194,12 @@ export class Battle extends Phaser.Scene {
     this.clearTargetPicker();
     const selector = item.targeting;
     if (this.needsManualTarget(selector)) {
-      const targets = this.collectTargets(selector, this.playerId);
+      const targets = this.collectTargets(selector, this.playerId, item.name);
+      if (!targets.length) {
+        this.renderState();
+        this.layoutUi();
+        return;
+      }
       this.promptForTarget(targets, (targetId) => {
         const result = useItem(this.state, item, this.playerId, [targetId]);
         this.afterAction({ autoAdvance: result.ok });
@@ -204,21 +214,13 @@ export class Battle extends Phaser.Scene {
     return selector.mode === 'single' && selector.side !== 'self';
   }
 
-  private collectTargets(selector: RuntimeSkill['targeting'], userId: string): string[] {
+  private collectTargets(
+    selector: RuntimeSkill['targeting'],
+    userId: string,
+    actionName?: string,
+  ): string[] {
     const allies = this.state.sidePlayer.includes(userId) ? this.state.sidePlayer : this.state.sideEnemy;
     const enemies = this.state.sidePlayer.includes(userId) ? this.state.sideEnemy : this.state.sidePlayer;
-    const includeDead = selector.includeDead ?? false;
-
-    if (selector.side === 'enemy' || selector.side === 'any') {
-      const tauntTargetId = resolveTauntTargetId(this.state, userId);
-      if (tauntTargetId) {
-        const actor = this.state.actors[tauntTargetId];
-        if (actor && actor.alive) {
-          return [tauntTargetId];
-        }
-      }
-    }
-
     let pool: string[] = [];
     switch (selector.side) {
       case 'self':
@@ -237,16 +239,25 @@ export class Battle extends Phaser.Scene {
         pool = enemies.slice();
         break;
     }
-    if (!includeDead) {
-      pool = pool.filter((id) => this.state.actors[id]?.alive);
+    const includeDead = selector.includeDead ?? false;
+    const condition = selector.condition;
+    const filtered = pool.filter((id) => {
+      const actor = this.state.actors[id];
+      if (!actor) return false;
+      if (!includeDead && !actor.alive) return false;
+      if (condition && !matchesFilter(actor, condition)) return false;
+      return true;
+    });
+    if (filtered.length === 0) {
+      const label = actionName ?? 'This action';
+      this.state.log.push(`${label} has no valid targets.`);
     }
-    return pool;
+    return filtered;
   }
 
   private promptForTarget(candidates: string[], onPick: (targetId: string) => void) {
     this.clearTargetPicker();
     if (!candidates.length) {
-      onPick(this.playerId);
       return;
     }
     const layout = this.layout ?? this.computeLayout();

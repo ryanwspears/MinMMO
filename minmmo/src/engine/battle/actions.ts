@@ -117,10 +117,24 @@ function executeAction(
   }
 
   const targetingSeed = state.rngSeed
-  const baseTargetIds =
-    providedTargetIds && providedTargetIds.length
-      ? providedTargetIds
-      : resolveTargets(state, normalizeSelector(action.targeting), userId)
+  const normalizedSelector = normalizeSelector(action.targeting)
+  const validationSelector: RuntimeTargetSelector = providedTargetIds
+    ? { ...normalizedSelector, mode: 'condition', count: undefined }
+    : normalizedSelector
+  const resolvedTargetIds = resolveTargets(state, validationSelector, userId)
+  let baseTargetIds: string[]
+  if (providedTargetIds) {
+    baseTargetIds = providedTargetIds.filter((id) => resolvedTargetIds.includes(id))
+    state.rngSeed = targetingSeed
+  } else {
+    baseTargetIds = resolvedTargetIds
+  }
+
+  if (baseTargetIds.length === 0) {
+    pushLog(state, `${action.name} has no valid targets.`)
+    state.rngSeed = targetingSeed
+    return { ok: false, log: state.log, state }
+  }
 
   const baseTargets = filterActors(state, baseTargetIds)
 
