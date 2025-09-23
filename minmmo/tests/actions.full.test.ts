@@ -243,6 +243,37 @@ describe('battle actions advanced behaviour', () => {
     expect(state.log.some((entry) => entry.includes('used Desperation'))).toBe(true)
   })
 
+  it('re-rolls random targets to satisfy canUse filters', () => {
+    const skill = makeSkill({
+      name: 'Hex Bolt',
+      targeting: makeSelector({ side: 'enemy', mode: 'random', count: 1 }),
+      canUse: { test: { key: 'tag', op: 'in', value: ['cursed'] } },
+      effects: [flatEffect('damage', 5)],
+    })
+
+    const seeds = [1, 42, 1337, 9001]
+    for (const seed of seeds) {
+      const player = makeActor('P1')
+      const cursed = makeActor('E2')
+      cursed.tags = ['enemy', 'cursed']
+      const enemies = [makeActor('E1'), cursed, makeActor('E3')]
+      const state = makeState([player], enemies)
+      state.rngSeed = seed
+
+      const result = useSkill(state, skill, player.id)
+      expect(result.ok).toBe(true)
+      expect(state.actors['E2']?.stats.hp).toBe(95)
+      expect(state.actors['E1']?.stats.hp).toBe(100)
+      expect(state.actors['E3']?.stats.hp).toBe(100)
+    }
+
+    const player = makeActor('P1')
+    const state = makeState([player], [makeActor('E1'), makeActor('E2'), makeActor('E3')])
+    const fail = useSkill(state, skill, player.id)
+    expect(fail.ok).toBe(false)
+    expect(state.log[state.log.length - 1]).toContain('cannot use Hex Bolt')
+  })
+
   it('enforces charges on limited-use skills', () => {
     const player = makeActor('P1')
     const enemy = makeActor('E1')

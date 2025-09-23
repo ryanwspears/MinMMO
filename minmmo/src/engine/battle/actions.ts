@@ -29,6 +29,10 @@ const RNG_M = 0x100000000
 
 type RuntimeAction = RuntimeSkill | RuntimeItem
 
+type TargetResolution =
+  | { ok: true; targets: Actor[] }
+  | { ok: false; reason: 'noTargets' | 'filter' }
+
 export function useSkill(
   state: BattleState,
   skill: RuntimeSkill,
@@ -81,6 +85,79 @@ type DamageOptions = {
 
 type ItemCost = { id: string; qty: number; consume: boolean }
 
+export function evaluateActionTargets(
+  state: BattleState,
+  action: RuntimeAction,
+  user: Actor,
+  providedTargetIds?: string[],
+): TargetResolution {
+  const targetingSeed = state.rngSeed
+  const normalizedSelector = normalizeSelector(action.targeting)
+  const candidateSelector: RuntimeTargetSelector = {
+    ...normalizedSelector,
+    mode: 'condition',
+    count: undefined,
+  }
+
+  const candidateIds = resolveTargets(state, candidateSelector, user.id)
+  state.rngSeed = targetingSeed
+  const candidateActors = filterActors(state, candidateIds)
+
+  let baseTargetIds: string[]
+  if (providedTargetIds) {
+    baseTargetIds = providedTargetIds.filter((id) => candidateIds.includes(id))
+  } else {
+    baseTargetIds = resolveTargets(state, normalizedSelector, user.id)
+  }
+
+  let finalTargets = filterActors(state, baseTargetIds)
+  if (finalTargets.length === 0) {
+    state.rngSeed = targetingSeed
+    return { ok: false, reason: 'noTargets' }
+  }
+
+  const filter = action.canUse
+  if (!filter) {
+    if (providedTargetIds) {
+      state.rngSeed = targetingSeed
+    }
+    return { ok: true, targets: finalTargets }
+  }
+
+  const userMatches = matchesFilter(user, filter)
+  const matchingCandidateIds = new Set(
+    candidateActors.filter((actor) => matchesFilter(actor, filter)).map((actor) => actor.id),
+  )
+
+  if (!userMatches && matchingCandidateIds.size === 0) {
+    state.rngSeed = targetingSeed
+    return { ok: false, reason: 'filter' }
+  }
+
+  let finalTargetIds = baseTargetIds
+  if (!userMatches) {
+    if (providedTargetIds) {
+      finalTargetIds = finalTargetIds.filter((id) => matchingCandidateIds.has(id))
+    } else {
+      state.rngSeed = targetingSeed
+      const restrictedSelector = withAdditionalCondition(normalizedSelector, filter)
+      finalTargetIds = resolveTargets(state, restrictedSelector, user.id)
+    }
+  }
+
+  finalTargets = filterActors(state, finalTargetIds)
+  if (finalTargets.length === 0) {
+    state.rngSeed = targetingSeed
+    return { ok: false, reason: 'noTargets' }
+  }
+
+  if (providedTargetIds) {
+    state.rngSeed = targetingSeed
+  }
+
+  return { ok: true, targets: finalTargets }
+}
+
 function executeAction(
   state: BattleState,
   action: RuntimeAction,
@@ -117,31 +194,18 @@ function executeAction(
   }
 
   const targetingSeed = state.rngSeed
-  const normalizedSelector = normalizeSelector(action.targeting)
-  const validationSelector: RuntimeTargetSelector = providedTargetIds
-    ? { ...normalizedSelector, mode: 'condition', count: undefined }
-    : normalizedSelector
-  const resolvedTargetIds = resolveTargets(state, validationSelector, userId)
-  let baseTargetIds: string[]
-  if (providedTargetIds) {
-    baseTargetIds = providedTargetIds.filter((id) => resolvedTargetIds.includes(id))
+  const targetResult = evaluateActionTargets(state, action, user, providedTargetIds)
+  if (!targetResult.ok) {
     state.rngSeed = targetingSeed
-  } else {
-    baseTargetIds = resolvedTargetIds
-  }
-
-  if (baseTargetIds.length === 0) {
-    pushLog(state, `${action.name} has no valid targets.`)
-    state.rngSeed = targetingSeed
+    if (targetResult.reason === 'filter') {
+      pushLog(state, `${user.name} cannot use ${action.name} right now.`)
+    } else {
+      pushLog(state, `${action.name} has no valid targets.`)
+    }
     return { ok: false, log: state.log, state }
   }
 
-  const baseTargets = filterActors(state, baseTargetIds)
-
-  if (!checkCanUseFilter(state, action, user, baseTargets)) {
-    state.rngSeed = targetingSeed
-    return { ok: false, log: state.log, state }
-  }
+  const baseTargets = targetResult.targets
 
   if (!payResourceCost(user, action.costs?.sta ?? 0, 'sta', state, action.name)) {
     state.rngSeed = targetingSeed
@@ -151,10 +215,6 @@ function executeAction(
   if (!payResourceCost(user, action.costs?.mp ?? 0, 'mp', state, action.name)) {
     state.rngSeed = targetingSeed
     return { ok: false, log: state.log, state }
-  }
-
-  if (baseTargets.length === 0) {
-    pushLog(state, `${action.name} has no valid targets.`)
   }
 
   applyItemCosts(state, itemCosts)
@@ -200,26 +260,15 @@ function filterActors(state: BattleState, ids: string[]): Actor[] {
     .filter((actor): actor is Actor => Boolean(actor))
 }
 
-function checkCanUseFilter(
-  state: BattleState,
-  action: RuntimeAction,
-  user: Actor,
-  targets: Actor[],
-): boolean {
-  const filter = action.canUse
-  if (!filter) {
-    return true
+function withAdditionalCondition(
+  selector: RuntimeTargetSelector,
+  filter: NonNullable<RuntimeAction['canUse']>,
+): RuntimeTargetSelector {
+  const existing = selector.condition
+  if (!existing) {
+    return { ...selector, condition: filter }
   }
-
-  const userMatches = matchesFilter(user, filter)
-  const targetMatches = targets.some((target) => matchesFilter(target, filter))
-
-  if (userMatches || targetMatches) {
-    return true
-  }
-
-  pushLog(state, `${user.name} cannot use ${action.name} right now.`)
-  return false
+  return { ...selector, condition: { all: [existing, filter] } }
 }
 
 function payResourceCost(
