@@ -5,7 +5,7 @@ import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn, collectUsableTargets } from '@engine/battle/actions';
 import { resolveTargets } from '@engine/battle/targeting';
-import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
+import type { Actor, BattleState, InventoryEntry, UseResult } from '@engine/battle/types';
 import {
   PlayerProfile,
   WorldState,
@@ -13,6 +13,7 @@ import {
   saveAll,
   clampInventory,
 } from '@game/save';
+import { BattleLogPlayer } from './BattleLogPlayer';
 
 interface BattleInitData {
   profile: PlayerProfile;
@@ -48,6 +49,7 @@ export class Battle extends Phaser.Scene {
   private actorLabels: Record<string, Phaser.GameObjects.Text> = {};
   private statusLabels: Record<string, Phaser.GameObjects.Text> = {};
   private logText!: Phaser.GameObjects.Text;
+  private logPlayer!: BattleLogPlayer;
   private skillButtons: Phaser.GameObjects.Text[] = [];
   private itemButtons: Phaser.GameObjects.Text[] = [];
   private endTurnButton?: Phaser.GameObjects.Text;
@@ -55,6 +57,9 @@ export class Battle extends Phaser.Scene {
   private targetButtons: TargetButton[] = [];
   private outcomeHandled = false;
   private layout?: LayoutMetrics;
+  private busy = false;
+  private targetSelectionActive = false;
+  private lastAnnouncedActor?: string;
 
   constructor() {
     super('Battle');
@@ -88,10 +93,13 @@ export class Battle extends Phaser.Scene {
       color: '#8b8fa3',
       wordWrap: { width: this.layout.logWidth },
     });
+    this.logPlayer = new BattleLogPlayer(this, this.logText);
+    this.logPlayer.prime(this.state.log);
 
     this.buildStaticUi();
     this.layoutUi();
     this.renderActions();
+    this.announceCurrentActor();
     this.renderState();
 
     this.scale.on('resize', this.handleResize, this);
@@ -126,12 +134,8 @@ export class Battle extends Phaser.Scene {
       .text(layout.endTurnX, layout.endTurnY, '[End Turn]', { color: '#7c5cff' })
       .setInteractive({ useHandCursor: true });
     this.endTurnButton.on('pointerdown', () => {
-      if (this.state.ended) return;
-      endTurn(this.state);
-      this.afterAction();
-      if (!this.state.ended) {
-        this.processEnemyTurns();
-      }
+      if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+      void this.handleEndTurn();
     });
   }
 
@@ -148,8 +152,8 @@ export class Battle extends Phaser.Scene {
       const label = `[Skill] ${skill.name}`;
       const text = this.add.text(20, skillY, label, { color: '#7c5cff' }).setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
-        if (this.state.ended) return;
-        this.handleSkill(skill);
+        if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+        void this.handleSkill(skill);
       });
       this.skillButtons.push(text);
       skillY += 24;
@@ -162,15 +166,17 @@ export class Battle extends Phaser.Scene {
       const label = `[Item] ${item.name} x${entry.qty}`;
       const text = this.add.text(220, itemY, label, { color: '#7c5cff' }).setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
-        if (this.state.ended) return;
-        this.handleItem(item);
+        if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+        void this.handleItem(item);
       });
       this.itemButtons.push(text);
       itemY += 24;
     }
+
+    this.refreshCommandAvailability();
   }
 
-  private handleSkill(skill: RuntimeSkill) {
+  private async handleSkill(skill: RuntimeSkill) {
     this.clearTargetPicker();
     const selector = skill.targeting;
     if (this.needsManualTarget(selector)) {
@@ -178,19 +184,27 @@ export class Battle extends Phaser.Scene {
       if (!targets.length) {
         this.renderState();
         this.layoutUi();
+        await this.logPlayer.drain();
+        this.refreshCommandAvailability();
         return;
       }
+      this.targetSelectionActive = true;
+      this.refreshCommandAvailability();
       this.promptForTarget(targets, (targetId) => {
-        const result = useSkill(this.state, skill, this.playerId, [targetId]);
-        this.afterAction({ autoAdvance: result.ok });
+        void this.runPlayerAction(() => {
+          const result = useSkill(this.state, skill, this.playerId, [targetId]);
+          return { result, autoAdvance: result.ok };
+        });
       });
     } else {
-      const result = useSkill(this.state, skill, this.playerId);
-      this.afterAction({ autoAdvance: result.ok });
+      await this.runPlayerAction(() => {
+        const result = useSkill(this.state, skill, this.playerId);
+        return { result, autoAdvance: result.ok };
+      });
     }
   }
 
-  private handleItem(item: RuntimeItem) {
+  private async handleItem(item: RuntimeItem) {
     this.clearTargetPicker();
     const selector = item.targeting;
     if (this.needsManualTarget(selector)) {
@@ -198,16 +212,71 @@ export class Battle extends Phaser.Scene {
       if (!targets.length) {
         this.renderState();
         this.layoutUi();
+        await this.logPlayer.drain();
+        this.refreshCommandAvailability();
         return;
       }
+      this.targetSelectionActive = true;
+      this.refreshCommandAvailability();
       this.promptForTarget(targets, (targetId) => {
-        const result = useItem(this.state, item, this.playerId, [targetId]);
-        this.afterAction({ autoAdvance: result.ok });
+        void this.runPlayerAction(() => {
+          const result = useItem(this.state, item, this.playerId, [targetId]);
+          return { result, autoAdvance: result.ok };
+        });
       });
     } else {
-      const result = useItem(this.state, item, this.playerId);
-      this.afterAction({ autoAdvance: result.ok });
+      await this.runPlayerAction(() => {
+        const result = useItem(this.state, item, this.playerId);
+        return { result, autoAdvance: result.ok };
+      });
     }
+  }
+
+  private async runPlayerAction(
+    executor: () => { result: UseResult; autoAdvance?: boolean },
+  ) {
+    if (this.busy) return;
+    this.busy = true;
+    this.refreshCommandAvailability();
+    this.clearTargetPicker();
+    const { result, autoAdvance } = executor();
+    await this.afterAction({ autoAdvance: autoAdvance ?? result.ok });
+    this.busy = false;
+    this.refreshCommandAvailability();
+  }
+
+  private async handleEndTurn() {
+    if (this.busy || this.state.ended || !this.isPlayerTurn()) return;
+    this.busy = true;
+    this.refreshCommandAvailability();
+    this.clearTargetPicker();
+    await this.advanceTurnAfterPlayer();
+    this.busy = false;
+    this.refreshCommandAvailability();
+  }
+
+  private announceCurrentActor() {
+    const actorId = this.state.order[this.state.current];
+    if (!actorId) return;
+    const actor = this.state.actors[actorId];
+    if (!actor) return;
+    this.announceActor(actor);
+  }
+
+  private announceActor(actor: Actor) {
+    if (!actor.alive) {
+      this.state.log.push(`${actor.name} cannot act.`);
+      return;
+    }
+    const isPlayer = this.state.sidePlayer.includes(actor.id);
+    const message = isPlayer
+      ? `${actor.name} is preparing to act.`
+      : `${actor.name} prepares to act.`;
+    if (this.lastAnnouncedActor === actor.id && this.state.log[this.state.log.length - 1] === message) {
+      return;
+    }
+    this.lastAnnouncedActor = actor.id;
+    this.state.log.push(message);
   }
 
   private needsManualTarget(selector: RuntimeSkill['targeting']): boolean {
@@ -244,6 +313,8 @@ export class Battle extends Phaser.Scene {
     if (!candidates.length) {
       return;
     }
+    this.targetSelectionActive = true;
+    this.refreshCommandAvailability();
     const layout = this.layout ?? this.computeLayout();
     this.targetPrompt = this.add.text(layout.targetX, 300, 'Choose target:', { color: '#e6e8ef' });
     let y = 330;
@@ -256,7 +327,6 @@ export class Battle extends Phaser.Scene {
         })
         .setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
-        this.clearTargetPicker();
         onPick(id);
       });
       this.targetButtons.push({ actorId: id, text });
@@ -278,6 +348,8 @@ export class Battle extends Phaser.Scene {
     }
     for (const entry of this.targetButtons) entry.text.destroy();
     this.targetButtons = [];
+    this.targetSelectionActive = false;
+    this.refreshCommandAvailability();
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
@@ -338,46 +410,101 @@ export class Battle extends Phaser.Scene {
     }
   }
 
-  private afterAction(options: { autoAdvance?: boolean } = {}) {
+  private isPlayerTurn(): boolean {
+    const currentId = this.state.order[this.state.current];
+    return !!currentId && this.state.sidePlayer.includes(currentId);
+  }
+
+  private refreshCommandAvailability() {
+    const enabled = !this.state.ended && this.isPlayerTurn() && !this.busy && !this.targetSelectionActive;
+    for (const btn of this.skillButtons) {
+      if (enabled) {
+        btn.setInteractive({ useHandCursor: true });
+        btn.setAlpha(1);
+      } else {
+        btn.disableInteractive();
+        btn.setAlpha(0.6);
+      }
+    }
+    for (const btn of this.itemButtons) {
+      if (enabled) {
+        btn.setInteractive({ useHandCursor: true });
+        btn.setAlpha(1);
+      } else {
+        btn.disableInteractive();
+        btn.setAlpha(0.6);
+      }
+    }
+    if (this.endTurnButton) {
+      if (enabled) {
+        this.endTurnButton.setInteractive({ useHandCursor: true });
+        this.endTurnButton.setAlpha(1);
+      } else {
+        this.endTurnButton.disableInteractive();
+        this.endTurnButton.setAlpha(0.6);
+      }
+    }
+  }
+
+  private async afterAction(options: { autoAdvance?: boolean } = {}) {
     clampInventory(this.state.inventory);
     this.renderActions();
     this.renderState();
     this.layoutUi();
+    await this.logPlayer.drain();
     if (this.state.ended) {
       this.checkOutcome();
       return;
     }
     if (options.autoAdvance) {
-      this.advanceTurnAfterPlayer();
+      await this.advanceTurnAfterPlayer();
     } else {
       this.checkOutcome();
     }
   }
 
-  private advanceTurnAfterPlayer() {
+  private async advanceTurnAfterPlayer() {
     endTurn(this.state);
     clampInventory(this.state.inventory);
+    this.renderActions();
     this.renderState();
     this.layoutUi();
+    await this.logPlayer.drain();
     this.checkOutcome();
     if (this.state.ended) {
       return;
     }
-    this.processEnemyTurns();
+    await this.processEnemyTurns();
   }
 
-  private processEnemyTurns() {
+  private async processEnemyTurns() {
     let guard = 0;
     while (!this.state.ended && guard < 100) {
       guard += 1;
       const actorId = this.state.order[this.state.current];
       if (!actorId) {
         endTurn(this.state);
+        clampInventory(this.state.inventory);
+        this.renderActions();
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
         continue;
       }
       const actor = this.state.actors[actorId];
       if (!actor || !actor.alive) {
+        if (actor && !actor.alive) {
+          this.state.log.push(`${actor.name} cannot act.`);
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+        }
         endTurn(this.state);
+        clampInventory(this.state.inventory);
+        this.renderActions();
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
         continue;
       }
       const isEnemy = this.state.sideEnemy.includes(actorId);
@@ -385,15 +512,33 @@ export class Battle extends Phaser.Scene {
         break;
       }
 
-      this.executeEnemyTurn(actor);
-      clampInventory(this.state.inventory);
+      this.announceActor(actor);
+      this.renderActions();
       this.renderState();
       this.layoutUi();
+      await this.logPlayer.drain();
+
+      this.executeEnemyTurn(actor);
+      clampInventory(this.state.inventory);
+      this.renderActions();
+      this.renderState();
+      this.layoutUi();
+      await this.logPlayer.drain();
       this.checkOutcome();
       if (this.state.ended) {
         return;
       }
+
       endTurn(this.state);
+      clampInventory(this.state.inventory);
+      this.renderActions();
+      this.renderState();
+      this.layoutUi();
+      await this.logPlayer.drain();
+      this.checkOutcome();
+      if (this.state.ended) {
+        return;
+      }
     }
 
     if (this.state.ended) {
@@ -401,9 +546,20 @@ export class Battle extends Phaser.Scene {
       return;
     }
 
-    this.renderActions();
-    this.renderState();
-    this.layoutUi();
+    const actorId = this.state.order[this.state.current];
+    const actor = actorId ? this.state.actors[actorId] : undefined;
+    if (actor && actor.alive && this.state.sidePlayer.includes(actorId)) {
+      this.announceActor(actor);
+      this.renderActions();
+      this.renderState();
+      this.layoutUi();
+      await this.logPlayer.drain();
+    } else {
+      this.renderActions();
+      this.renderState();
+      this.layoutUi();
+    }
+    this.refreshCommandAvailability();
     this.checkOutcome();
   }
 
@@ -470,8 +626,7 @@ export class Battle extends Phaser.Scene {
         this.updateActorPanel(actor, layout.rightColumnX, baseY);
       }
     }
-    const recent = this.state.log.slice(-7);
-    this.logText.setText(recent.join('\n'));
+    this.logPlayer.sync(this.state.log);
   }
 
   private updateActorPanel(actor: Actor, x: number, baseY: number) {
