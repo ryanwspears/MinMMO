@@ -32,13 +32,32 @@ const PLAYER_ID = 'player';
 const BAR_WIDTH = 200;
 const BAR_HEIGHT = 12;
 
+interface LayoutRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface LayoutMetrics {
+  header: LayoutRect;
+  stage: LayoutRect;
+  sidebar: LayoutRect;
+  footer: LayoutRect;
   rightColumnX: number;
   logWidth: number;
   logY: number;
   endTurnX: number;
   endTurnY: number;
   targetX: number;
+  skillColumnX: number;
+  itemColumnX: number;
+  commandsY: number;
+  playerLabelY: number;
+  playerBarY: number;
+  enemyLabelStart: number;
+  enemyBarStart: number;
+  enemySpacing: number;
 }
 
 export class Battle extends Phaser.Scene {
@@ -46,11 +65,16 @@ export class Battle extends Phaser.Scene {
   private world!: WorldState;
   private state!: BattleState;
   private playerId = PLAYER_ID;
+  private headerBackground!: Phaser.GameObjects.Graphics;
+  private stageBackground!: Phaser.GameObjects.Graphics;
+  private sidebarBackground!: Phaser.GameObjects.Graphics;
+  private footerBackground!: Phaser.GameObjects.Graphics;
   private barGraphics!: Phaser.GameObjects.Graphics;
   private actorLabels: Record<string, Phaser.GameObjects.Text> = {};
   private statusLabels: Record<string, Phaser.GameObjects.Text> = {};
   private logText!: Phaser.GameObjects.Text;
   private logPlayer!: BattleLogPlayer;
+  private headerTitle?: Phaser.GameObjects.Text;
   private skillButtons: Phaser.GameObjects.Text[] = [];
   private itemButtons: Phaser.GameObjects.Text[] = [];
   private endTurnButton?: Phaser.GameObjects.Text;
@@ -92,8 +116,12 @@ export class Battle extends Phaser.Scene {
 
     this.cameras.resize(this.scale.width, this.scale.height);
     this.layout = this.computeLayout();
+    this.headerBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
+    this.stageBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
+    this.sidebarBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
+    this.footerBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
     this.barGraphics = this.add.graphics();
-    this.logText = this.add.text(20, this.layout.logY, '', {
+    this.logText = this.add.text(this.layout.stage.x + 16, this.layout.logY, '', {
       color: '#8b8fa3',
       wordWrap: { width: this.layout.logWidth },
     });
@@ -113,24 +141,29 @@ export class Battle extends Phaser.Scene {
   }
 
   private buildStaticUi() {
-    this.add.text(20, 20, 'Battle — defeat all enemies!', { color: '#e6e8ef', fontSize: '18px' });
+    const layout = this.layout ?? this.computeLayout();
+    this.headerTitle = this.add.text(layout.header.x + 16, layout.header.y + 16, 'Battle — defeat all enemies!', {
+      color: '#e6e8ef',
+      fontSize: '18px',
+    });
     const enemyCount = this.state.sideEnemy.length;
     this.actorLabels = {};
     this.statusLabels = {};
-    const playerText = this.add.text(20, 60, '', { color: '#e6e8ef' });
-    const playerStatus = this.add.text(20, 90, '', { color: '#7c5cff', wordWrap: { width: 360 } });
+    const playerText = this.add.text(layout.stage.x + 16, layout.playerLabelY, '', { color: '#e6e8ef' });
+    const playerStatus = this.add.text(layout.stage.x + 16, layout.playerLabelY + 28, '', {
+      color: '#7c5cff',
+      wordWrap: { width: Math.max(220, layout.stage.width - 32) },
+    });
     this.actorLabels[this.playerId] = playerText;
     this.statusLabels[this.playerId] = playerStatus;
 
-    const layout = this.layout ?? this.computeLayout();
-
     for (let i = 0; i < enemyCount; i += 1) {
       const actorId = this.state.sideEnemy[i];
-      const baseY = 60 + i * 80;
+      const baseY = layout.enemyLabelStart + i * layout.enemySpacing;
       this.actorLabels[actorId] = this.add.text(layout.rightColumnX, baseY, '', { color: '#f5c6a5' });
       this.statusLabels[actorId] = this.add.text(layout.rightColumnX, baseY + 24, '', {
         color: '#7c5cff',
-        wordWrap: { width: Math.max(220, layout.logWidth / 2) },
+        wordWrap: { width: Math.max(220, layout.sidebar.width - 32) },
       });
     }
 
@@ -162,12 +195,15 @@ export class Battle extends Phaser.Scene {
       void this.handleFlee();
     });
 
-    let skillY = 320;
+    const skillX = layout.skillColumnX;
+    let skillY = layout.commandsY;
     for (const id of this.profile.equippedSkills) {
       const skill = Skills()[id];
       if (!skill) continue;
       const label = `[Skill] ${skill.name}`;
-      const text = this.add.text(20, skillY, label, { color: '#7c5cff' }).setInteractive({ useHandCursor: true });
+      const text = this.add
+        .text(skillX, skillY, label, { color: '#7c5cff' })
+        .setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
         if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
         void this.handleSkill(skill);
@@ -176,12 +212,18 @@ export class Battle extends Phaser.Scene {
       skillY += 24;
     }
 
-    let itemY = 320;
+    const stackItems = layout.itemColumnX <= skillX + 24;
+    const itemX = stackItems ? skillX : layout.itemColumnX;
+    let itemY = stackItems
+      ? (this.skillButtons.length ? skillY + 16 : layout.commandsY)
+      : layout.commandsY;
     for (const entry of this.state.inventory) {
       const item = Items()[entry.id];
       if (!item) continue;
       const label = `[Item] ${item.name} x${entry.qty}`;
-      const text = this.add.text(220, itemY, label, { color: '#7c5cff' }).setInteractive({ useHandCursor: true });
+      const text = this.add
+        .text(itemX, itemY, label, { color: '#7c5cff' })
+        .setInteractive({ useHandCursor: true });
       text.on('pointerdown', () => {
         if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
         void this.handleItem(item);
@@ -393,8 +435,9 @@ export class Battle extends Phaser.Scene {
     this.targetSelectionActive = true;
     this.refreshCommandAvailability();
     const layout = this.layout ?? this.computeLayout();
-    this.targetPrompt = this.add.text(layout.targetX, 300, 'Choose target:', { color: '#e6e8ef' });
-    let y = 330;
+    const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
+    this.targetPrompt = this.add.text(layout.targetX, baseY, 'Choose target:', { color: '#e6e8ef' });
+    let y = baseY + 30;
     for (const id of candidates) {
       const actor = this.state.actors[id];
       if (!actor) continue;
@@ -440,27 +483,235 @@ export class Battle extends Phaser.Scene {
   private computeLayout(width = this.scale.width, height = this.scale.height): LayoutMetrics {
     const safeWidth = Math.max(360, width);
     const safeHeight = Math.max(320, height);
-    const rightColumnX = Math.max(360, safeWidth - (BAR_WIDTH + 60));
-    const logWidth = Math.max(280, safeWidth - 40);
-    const logY = Math.max(260, safeHeight - 200);
-    const endTurnY = Math.max(80, Math.min(safeHeight - 40, logY + 120));
-    const endTurnX = Math.max(20, safeWidth - 140);
+    const padding = 20;
+    const gap = 20;
+    const headerHeight = 64;
+    const contentWidth = Math.max(160, safeWidth - padding * 2);
+    const columnsWidth = Math.max(120, contentWidth - gap);
+    const desiredStageRatio = 0.58;
+    let stageWidth = Math.round(columnsWidth * desiredStageRatio);
+    let sidebarWidth = columnsWidth - stageWidth;
+    const desiredStageMin = 160;
+    const desiredSidebarMin = 160;
+    if (stageWidth < desiredStageMin) {
+      stageWidth = desiredStageMin;
+      sidebarWidth = columnsWidth - stageWidth;
+    }
+    if (sidebarWidth < desiredSidebarMin) {
+      sidebarWidth = desiredSidebarMin;
+      stageWidth = columnsWidth - sidebarWidth;
+    }
+    if (stageWidth < 120) {
+      stageWidth = 120;
+      sidebarWidth = columnsWidth - stageWidth;
+    }
+    if (sidebarWidth < 120) {
+      sidebarWidth = 120;
+      stageWidth = columnsWidth - sidebarWidth;
+    }
+    if (stageWidth + sidebarWidth > columnsWidth) {
+      const total = stageWidth + sidebarWidth;
+      if (total > 0) {
+        const scale = columnsWidth / total;
+        stageWidth = Math.max(80, Math.round(stageWidth * scale));
+        sidebarWidth = Math.max(80, Math.round(sidebarWidth * scale));
+      }
+    }
+    stageWidth = Math.min(stageWidth, columnsWidth);
+    sidebarWidth = Math.max(0, columnsWidth - stageWidth);
+
+    const headerRect: LayoutRect = {
+      x: padding,
+      y: padding,
+      width: contentWidth,
+      height: headerHeight,
+    };
+
+    const stageRect: LayoutRect = {
+      x: padding,
+      y: headerRect.y + headerRect.height + gap,
+      width: stageWidth,
+      height: 0,
+    };
+    const sidebarRect: LayoutRect = {
+      x: stageRect.x + stageRect.width + gap,
+      y: stageRect.y,
+      width: Math.max(0, contentWidth - stageRect.width - gap),
+      height: 0,
+    };
+
+    const totalBelowHeader = Math.max(0, safeHeight - (stageRect.y + padding));
+    let footerHeight = Math.max(100, Math.round(totalBelowHeader * 0.35));
+    const minFooterHeight = 80;
+    if (footerHeight > totalBelowHeader - 120) {
+      footerHeight = Math.max(minFooterHeight, totalBelowHeader - 120);
+    }
+    footerHeight = Math.max(minFooterHeight, Math.min(footerHeight, totalBelowHeader));
+    let stageHeight = Math.max(160, totalBelowHeader - footerHeight - gap);
+    if (stageHeight < 160) {
+      stageHeight = Math.max(100, totalBelowHeader - footerHeight - gap);
+    }
+    if (stageHeight < 100) {
+      stageHeight = Math.max(60, totalBelowHeader - footerHeight - gap);
+    }
+    if (stageHeight + footerHeight + gap > totalBelowHeader) {
+      const excess = stageHeight + footerHeight + gap - totalBelowHeader;
+      stageHeight = Math.max(60, stageHeight - excess);
+      if (stageHeight + footerHeight + gap > totalBelowHeader) {
+        footerHeight = Math.max(minFooterHeight, footerHeight - (stageHeight + footerHeight + gap - totalBelowHeader));
+      }
+    }
+    stageHeight = Math.max(60, Math.min(stageHeight, totalBelowHeader));
+    const footerRect: LayoutRect = {
+      x: padding,
+      y: stageRect.y + stageHeight + gap,
+      width: contentWidth,
+      height: Math.max(0, Math.min(footerHeight, safeHeight - (stageRect.y + stageHeight + gap) - padding)),
+    };
+    if (footerRect.height < minFooterHeight) {
+      footerRect.height = Math.max(minFooterHeight, safeHeight - footerRect.y - padding);
+    }
+    stageRect.height = Math.max(0, Math.min(stageHeight, footerRect.y - stageRect.y - gap));
+    sidebarRect.height = Math.max(stageRect.height, footerRect.y - stageRect.y - gap);
+
+    const stageRight = stageRect.x + stageRect.width;
+    const logWidth = Math.max(240, stageRect.width - 32);
+    let logY = stageRect.y + stageRect.height - 120;
+    logY = Math.min(logY, footerRect.y - 120);
+    logY = Math.max(stageRect.y + 20, logY);
+    const commandsY = footerRect.y + 16;
+    const skillColumnX = stageRect.x + 16;
+    let itemColumnX = stageRect.x + 220;
+    if (itemColumnX + 160 > stageRight) {
+      itemColumnX = stageRect.x + Math.max(16, Math.min(stageRect.width - 160, Math.round(stageRect.width / 2) + 16));
+    }
+    if (itemColumnX + 120 > stageRight) {
+      itemColumnX = skillColumnX;
+    }
+    const playerLabelY = stageRect.y + 16;
+    const playerBarY = playerLabelY + 60;
+    const enemyLabelStart = sidebarRect.y + 16;
+    const enemySpacing = 80;
+    const enemyBarStart = enemyLabelStart + 60;
+    const targetXCandidate = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - 160;
+    const targetX = Math.max(stageRect.x + 16, targetXCandidate);
+    const endTurnX = Math.max(skillColumnX, footerRect.x + footerRect.width - 140);
+    const endTurnY = footerRect.y + Math.max(32, footerRect.height - 48);
+    const rightColumnX = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight + 16;
+
     return {
+      header: headerRect,
+      stage: stageRect,
+      sidebar: sidebarRect,
+      footer: footerRect,
       rightColumnX,
       logWidth,
       logY,
       endTurnX,
       endTurnY,
-      targetX: rightColumnX,
+      targetX,
+      skillColumnX,
+      itemColumnX,
+      commandsY,
+      playerLabelY,
+      playerBarY,
+      enemyLabelStart,
+      enemyBarStart,
+      enemySpacing,
     };
+  }
+
+  private redrawBackgrounds(layout: LayoutMetrics) {
+    if (!this.headerBackground || !this.stageBackground || !this.sidebarBackground || !this.footerBackground) {
+      return;
+    }
+    const borderColor = 0x20264a;
+    const headerRadius = 12;
+    const panelRadius = 16;
+
+    this.headerBackground.clear();
+    if (layout.header.width > 0 && layout.header.height > 0) {
+      this.headerBackground.fillStyle(0x141830, 0.95);
+      this.headerBackground.fillRoundedRect(
+        layout.header.x,
+        layout.header.y,
+        layout.header.width,
+        layout.header.height,
+        headerRadius,
+      );
+      this.headerBackground.lineStyle(2, borderColor, 0.8);
+      this.headerBackground.strokeRoundedRect(
+        layout.header.x,
+        layout.header.y,
+        layout.header.width,
+        layout.header.height,
+        headerRadius,
+      );
+    }
+
+    this.stageBackground.clear();
+    if (layout.stage.width > 0 && layout.stage.height > 0) {
+      this.stageBackground.fillGradientStyle(0x141830, 0x1a1f3a, 0x0f1220, 0x10152a, 1);
+      this.stageBackground.fillRect(layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height);
+      this.stageBackground.lineStyle(2, borderColor, 0.7);
+      this.stageBackground.strokeRect(layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height);
+    }
+
+    this.sidebarBackground.clear();
+    if (layout.sidebar.width > 0 && layout.sidebar.height > 0) {
+      this.sidebarBackground.fillStyle(0x141830, 0.92);
+      this.sidebarBackground.fillRoundedRect(
+        layout.sidebar.x,
+        layout.sidebar.y,
+        layout.sidebar.width,
+        layout.sidebar.height,
+        panelRadius,
+      );
+      this.sidebarBackground.lineStyle(2, borderColor, 0.7);
+      this.sidebarBackground.strokeRoundedRect(
+        layout.sidebar.x,
+        layout.sidebar.y,
+        layout.sidebar.width,
+        layout.sidebar.height,
+        panelRadius,
+      );
+    }
+
+    this.footerBackground.clear();
+    if (layout.footer.width > 0 && layout.footer.height > 0) {
+      this.footerBackground.fillStyle(0x141830, 0.92);
+      this.footerBackground.fillRoundedRect(
+        layout.footer.x,
+        layout.footer.y,
+        layout.footer.width,
+        layout.footer.height,
+        panelRadius,
+      );
+      this.footerBackground.lineStyle(2, borderColor, 0.7);
+      this.footerBackground.strokeRoundedRect(
+        layout.footer.x,
+        layout.footer.y,
+        layout.footer.width,
+        layout.footer.height,
+        panelRadius,
+      );
+    }
   }
 
   private layoutUi() {
     this.layout = this.computeLayout();
     const layout = this.layout;
     if (!layout) return;
-    this.logText.setPosition(20, layout.logY);
+    this.redrawBackgrounds(layout);
+    this.logText.setPosition(layout.stage.x + 16, layout.logY);
     this.logText.setWordWrapWidth(layout.logWidth);
+    if (this.headerTitle) {
+      this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
+    }
+    const playerLabel = this.actorLabels[this.playerId];
+    if (playerLabel) {
+      playerLabel.setPosition(layout.stage.x + 16, layout.playerLabelY);
+    }
     if (this.endTurnButton) {
       this.endTurnButton.setPosition(layout.endTurnX, layout.endTurnY);
     }
@@ -469,24 +720,48 @@ export class Battle extends Phaser.Scene {
     }
     const playerStatus = this.statusLabels[this.playerId];
     if (playerStatus) {
-      playerStatus.setWordWrapWidth(Math.max(220, layout.logWidth / 2));
+      playerStatus.setPosition(layout.stage.x + 16, layout.playerLabelY + 28);
+      playerStatus.setWordWrapWidth(Math.max(220, layout.stage.width - 32));
     }
-    for (const enemyId of this.state.sideEnemy) {
+    this.state.sideEnemy.forEach((enemyId, index) => {
       const label = this.actorLabels[enemyId];
       const status = this.statusLabels[enemyId];
+      const baseY = layout.enemyLabelStart + index * layout.enemySpacing;
       if (label) {
-        label.setX(layout.rightColumnX);
+        label.setPosition(layout.rightColumnX, baseY);
       }
       if (status) {
-        status.setX(layout.rightColumnX);
-        status.setWordWrapWidth(Math.max(220, layout.logWidth / 2));
+        status.setPosition(layout.rightColumnX, baseY + 24);
+        status.setWordWrapWidth(Math.max(220, Math.max(0, layout.sidebar.width - 32)));
       }
+    });
+
+    let skillY = layout.commandsY;
+    for (const btn of this.skillButtons) {
+      btn.setPosition(layout.skillColumnX, skillY);
+      skillY += 24;
+    }
+    const stackItems = layout.itemColumnX <= layout.skillColumnX + 24;
+    const itemX = stackItems ? layout.skillColumnX : layout.itemColumnX;
+    let itemY = stackItems
+      ? (this.skillButtons.length ? skillY + 16 : layout.commandsY)
+      : layout.commandsY;
+    for (const btn of this.itemButtons) {
+      btn.setPosition(itemX, itemY);
+      itemY += 24;
     }
     if (this.targetPrompt) {
-      this.targetPrompt.setX(layout.targetX);
-    }
-    for (const entry of this.targetButtons) {
-      entry.text.setX(layout.targetX);
+      const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
+      this.targetPrompt.setPosition(layout.targetX, baseY);
+      let y = baseY + 30;
+      for (const entry of this.targetButtons) {
+        if (entry.actorId === 'cancel') {
+          entry.text.setPosition(layout.targetX, y + 10);
+        } else {
+          entry.text.setPosition(layout.targetX, y);
+          y += 22;
+        }
+      }
     }
   }
 
@@ -718,19 +993,17 @@ export class Battle extends Phaser.Scene {
   private renderState() {
     this.barGraphics.clear();
     const player = this.state.actors[this.playerId];
-    if (player) {
-      this.updateActorPanel(player, 20, 120);
-    }
-    const layout = this.computeLayout();
+    const layout = this.layout ?? this.computeLayout();
     this.layout = layout;
-    for (let i = 0; i < this.state.sideEnemy.length; i += 1) {
-      const enemyId = this.state.sideEnemy[i];
-      const actor = this.state.actors[enemyId];
-      if (actor) {
-        const baseY = 120 + i * 80;
-        this.updateActorPanel(actor, layout.rightColumnX, baseY);
-      }
+    if (player) {
+      this.updateActorPanel(player, layout.stage.x + 16, layout.playerBarY);
     }
+    this.state.sideEnemy.forEach((enemyId, index) => {
+      const actor = this.state.actors[enemyId];
+      if (!actor) return;
+      const baseY = layout.enemyBarStart + index * layout.enemySpacing;
+      this.updateActorPanel(actor, layout.rightColumnX, baseY);
+    });
     this.logPlayer.sync(this.state.log);
   }
 
