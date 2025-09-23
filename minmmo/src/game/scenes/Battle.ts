@@ -3,7 +3,7 @@ import { CONFIG } from '@config/store';
 import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
-import { useItem, useSkill, endTurn, evaluateActionTargets } from '@engine/battle/actions';
+import { useItem, useSkill, endTurn, resolveActionTargetIds } from '@engine/battle/actions';
 import { resolveTargets } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
@@ -449,7 +449,7 @@ export class Battle extends Phaser.Scene {
       return false;
     }
     const prevSeed = this.state.rngSeed;
-    const resolution = evaluateActionTargets(this.state, skill, actor);
+    const resolution = resolveActionTargetIds(this.state, skill, actor);
     this.state.rngSeed = prevSeed;
     return resolution.ok;
   }

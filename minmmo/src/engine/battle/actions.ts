@@ -33,6 +33,10 @@ type TargetResolution =
   | { ok: true; targets: Actor[] }
   | { ok: false; reason: 'noTargets' | 'filter' }
 
+type TargetIdResolution =
+  | { ok: true; targetIds: string[] }
+  | { ok: false; reason: 'noTargets' | 'filter' }
+
 export function useSkill(
   state: BattleState,
   skill: RuntimeSkill,
@@ -91,6 +95,25 @@ export function evaluateActionTargets(
   user: Actor,
   providedTargetIds?: string[],
 ): TargetResolution {
+  const resolution = resolveActionTargetIds(state, action, user, providedTargetIds)
+  if (!resolution.ok) {
+    return resolution
+  }
+
+  const targets = filterActors(state, resolution.targetIds)
+  if (targets.length === 0) {
+    return { ok: false, reason: 'noTargets' }
+  }
+
+  return { ok: true, targets }
+}
+
+export function resolveActionTargetIds(
+  state: BattleState,
+  action: RuntimeAction,
+  user: Actor,
+  providedTargetIds?: string[],
+): TargetIdResolution {
   const targetingSeed = state.rngSeed
   const normalizedSelector = normalizeSelector(action.targeting)
   const candidateSelector: RuntimeTargetSelector = {
@@ -103,59 +126,58 @@ export function evaluateActionTargets(
   state.rngSeed = targetingSeed
   const candidateActors = filterActors(state, candidateIds)
 
-  let baseTargetIds: string[]
-  if (providedTargetIds) {
-    baseTargetIds = providedTargetIds.filter((id) => candidateIds.includes(id))
-  } else {
-    baseTargetIds = resolveTargets(state, normalizedSelector, user.id)
+  const finalize = (ids: string[], consumeRng: boolean): TargetIdResolution => {
+    const targets = filterActors(state, ids)
+    if (targets.length === 0) {
+      state.rngSeed = targetingSeed
+      return { ok: false, reason: 'noTargets' }
+    }
+    if (!consumeRng) {
+      state.rngSeed = targetingSeed
+    }
+    return { ok: true, targetIds: targets.map((actor) => actor.id) }
   }
 
-  let finalTargets = filterActors(state, baseTargetIds)
-  if (finalTargets.length === 0) {
-    state.rngSeed = targetingSeed
-    return { ok: false, reason: 'noTargets' }
+  if (candidateActors.length === 0) {
+    return finalize([], false)
   }
 
   const filter = action.canUse
   if (!filter) {
     if (providedTargetIds) {
-      state.rngSeed = targetingSeed
+      const allowed = providedTargetIds.filter((id) => candidateIds.includes(id))
+      return finalize(allowed, false)
     }
-    return { ok: true, targets: finalTargets }
+
+    state.rngSeed = targetingSeed
+    const resolved = resolveTargets(state, normalizedSelector, user.id)
+    return finalize(resolved, true)
   }
 
   const userMatches = matchesFilter(user, filter)
-  const matchingCandidateIds = new Set(
+  const eligibleIds = new Set(
     candidateActors.filter((actor) => matchesFilter(actor, filter)).map((actor) => actor.id),
   )
 
-  if (!userMatches && matchingCandidateIds.size === 0) {
+  if (!userMatches && eligibleIds.size === 0) {
     state.rngSeed = targetingSeed
     return { ok: false, reason: 'filter' }
   }
 
-  let finalTargetIds = baseTargetIds
-  if (!userMatches) {
-    if (providedTargetIds) {
-      finalTargetIds = finalTargetIds.filter((id) => matchingCandidateIds.has(id))
-    } else {
-      state.rngSeed = targetingSeed
-      const restrictedSelector = withAdditionalCondition(normalizedSelector, filter)
-      finalTargetIds = resolveTargets(state, restrictedSelector, user.id)
-    }
-  }
-
-  finalTargets = filterActors(state, finalTargetIds)
-  if (finalTargets.length === 0) {
-    state.rngSeed = targetingSeed
-    return { ok: false, reason: 'noTargets' }
-  }
-
   if (providedTargetIds) {
-    state.rngSeed = targetingSeed
+    const allowed = providedTargetIds.filter((id) => candidateIds.includes(id))
+    const restricted = userMatches ? allowed : allowed.filter((id) => eligibleIds.has(id))
+    return finalize(restricted, false)
   }
 
-  return { ok: true, targets: finalTargets }
+  const selectorToUse = !userMatches
+    ? withAdditionalCondition(normalizedSelector, filter)
+    : normalizedSelector
+
+  state.rngSeed = targetingSeed
+  const resolved = resolveTargets(state, selectorToUse, user.id)
+  const restricted = !userMatches ? resolved.filter((id) => eligibleIds.has(id)) : resolved
+  return finalize(restricted, true)
 }
 
 function executeAction(
@@ -194,7 +216,7 @@ function executeAction(
   }
 
   const targetingSeed = state.rngSeed
-  const targetResult = evaluateActionTargets(state, action, user, providedTargetIds)
+  const targetResult = resolveActionTargetIds(state, action, user, providedTargetIds)
   if (!targetResult.ok) {
     state.rngSeed = targetingSeed
     if (targetResult.reason === 'filter') {
@@ -205,7 +227,7 @@ function executeAction(
     return { ok: false, log: state.log, state }
   }
 
-  const baseTargets = targetResult.targets
+  const baseTargets = filterActors(state, targetResult.targetIds)
 
   if (!payResourceCost(user, action.costs?.sta ?? 0, 'sta', state, action.name)) {
     state.rngSeed = targetingSeed
