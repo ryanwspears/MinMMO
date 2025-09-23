@@ -31,11 +31,19 @@ export function resolveTargets(
   }
 
   const includeDead = selector.includeDead ?? false
-  const baseCandidates = gatherCandidates(state, selector.side, userId, includeDead)
+
+  const tauntTargetId =
+    selector.side === 'enemy' || selector.side === 'any'
+      ? resolveTauntTargetId(state, userId)
+      : undefined
 
   if (selector.mode === 'self') {
     return includeDead || user.alive ? [userId] : []
   }
+
+  const baseCandidates = tauntTargetId
+    ? [state.actors[tauntTargetId]].filter(Boolean) as Actor[]
+    : gatherCandidates(state, selector.side, userId, includeDead)
 
   let candidates = selector.condition
     ? baseCandidates.filter((actor) => matchesFilter(actor, selector.condition!))
@@ -71,6 +79,24 @@ export function resolveTargets(
     default:
       return includeDead || user.alive ? [userId] : []
   }
+}
+
+export function resolveTauntTargetId(state: BattleState, userId: string): string | undefined {
+  const taunt = state.taunts[userId]
+  if (!taunt) {
+    return undefined
+  }
+
+  const sameSide = state.sidePlayer.includes(userId) ? state.sidePlayer : state.sideEnemy
+  const opposingSide = sameSide === state.sidePlayer ? state.sideEnemy : state.sidePlayer
+  const source = state.actors[taunt.sourceId]
+
+  if (!source || !source.alive || !opposingSide.includes(taunt.sourceId)) {
+    delete state.taunts[userId]
+    return undefined
+  }
+
+  return taunt.sourceId
 }
 
 function gatherCandidates(
