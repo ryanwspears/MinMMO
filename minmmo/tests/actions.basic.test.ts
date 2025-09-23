@@ -195,6 +195,49 @@ describe('battle actions basics', () => {
     expect(state.log[state.log.length - 1]).toContain('Not enough MP')
   })
 
+  it('blocks manual targeting that ignores selector conditions', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState(player, enemy)
+
+    const execute = makeSkill({
+      name: 'Execute',
+      costs: { sta: 3, mp: 2, cooldown: 0 },
+      targeting: makeSelector({
+        side: 'enemy',
+        mode: 'single',
+        condition: {
+          test: { key: 'hpPct', op: 'lte', value: 0.25 },
+        },
+      }),
+    })
+
+    const result = useSkill(state, execute, player.id, [enemy.id])
+
+    expect(result.ok).toBe(false)
+    expect(state.actors[player.id]?.stats.sta).toBe(20)
+    expect(state.actors[player.id]?.stats.mp).toBe(15)
+    expect(state.log[state.log.length - 1]).toBe('Execute has no valid targets.')
+  })
+
+  it('handles empty manual target lists gracefully', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState(player, enemy)
+
+    const bolt = makeSkill({
+      name: 'Manual Bolt',
+      costs: { sta: 1, mp: 1, cooldown: 0 },
+    })
+
+    const result = useSkill(state, bolt, player.id, [])
+
+    expect(result.ok).toBe(false)
+    expect(state.actors[player.id]?.stats.sta).toBe(20)
+    expect(state.actors[player.id]?.stats.mp).toBe(15)
+    expect(state.log[state.log.length - 1]).toBe('Manual Bolt has no valid targets.')
+  })
+
   it('advances the turn order when ending a turn', () => {
     const player = makeActor('P1')
     const enemy = makeActor('E1')

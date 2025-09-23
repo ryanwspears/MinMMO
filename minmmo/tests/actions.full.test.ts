@@ -397,10 +397,11 @@ describe('battle actions advanced behaviour', () => {
 
     const flee = makeSkill({
       name: 'Escape',
+      targeting: makeSelector({ side: 'self', mode: 'self' }),
       effects: [flatEffect('flee', 0)],
     })
 
-    const result = useSkill(state, flee, player.id, [])
+    const result = useSkill(state, flee, player.id)
     expect(result.ok).toBe(true)
     expect(state.ended?.reason).toBe('fled')
   })
