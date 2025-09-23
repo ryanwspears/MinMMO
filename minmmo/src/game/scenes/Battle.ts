@@ -4,7 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn } from '@engine/battle/actions';
-import { resolveTargets } from '@engine/battle/targeting';
+import { resolveTargets, matchesFilter } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
   PlayerProfile,
@@ -451,7 +451,27 @@ export class Battle extends Phaser.Scene {
     const prevSeed = this.state.rngSeed;
     const targets = resolveTargets(this.state, skill.targeting, actor.id);
     this.state.rngSeed = prevSeed;
-    return targets.length > 0;
+    if (targets.length === 0) {
+      return false;
+    }
+
+    const filter = skill.canUse;
+    if (!filter) {
+      return true;
+    }
+
+    const resolvedTargets = targets
+      .map((id) => this.state.actors[id])
+      .filter((target): target is Actor => Boolean(target));
+    if (resolvedTargets.length === 0) {
+      return false;
+    }
+
+    if (matchesFilter(actor, filter)) {
+      return true;
+    }
+
+    return resolvedTargets.some((target) => matchesFilter(target, filter));
   }
 
   private renderState() {

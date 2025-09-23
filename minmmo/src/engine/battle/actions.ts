@@ -536,7 +536,7 @@ function modifierMultiplier(
   if (!map) {
     return 1
   }
-  const keys: string[] = ['all', ...categories]
+  const keys: string[] = ['all', ...categories.filter((key): key is string => Boolean(key))]
   let total = 0
   const seen = new Set<string>()
   for (const key of keys) {
