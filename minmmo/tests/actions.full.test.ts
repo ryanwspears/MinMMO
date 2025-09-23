@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeEffect, RuntimeItem, RuntimeSkill, RuntimeTargetSelector } from '@content/adapters'
 import { applyStatus } from '@engine/battle/status'
-import { useItem, useSkill, endTurn } from '@engine/battle/actions'
+import { useItem, useSkill, endTurn, resolveActionTargetIds } from '@engine/battle/actions'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
 import { DEFAULTS } from '@config/defaults'
@@ -272,6 +272,45 @@ describe('battle actions advanced behaviour', () => {
     const fail = useSkill(state, skill, player.id)
     expect(fail.ok).toBe(false)
     expect(state.log[state.log.length - 1]).toContain('cannot use Hex Bolt')
+  })
+
+  it('filters random targets by canUse for players and AI alike', () => {
+    const skill = makeSkill({
+      name: 'Scorching Shot',
+      targeting: makeSelector({ side: 'enemy', mode: 'random' }),
+      canUse: { test: { key: 'tag', op: 'in', value: ['burning'] } },
+      effects: [flatEffect('damage', 10)],
+    })
+
+    const player = makeActor('P1')
+    const burningEnemy = makeActor('E-hot')
+    burningEnemy.tags.push('burning')
+    const otherEnemy = makeActor('E-cold')
+    const playerState = makeState([player], [burningEnemy, otherEnemy])
+
+    const result = useSkill(playerState, skill, player.id)
+    expect(result.ok).toBe(true)
+    expect(playerState.actors[burningEnemy.id]?.stats.hp).toBeLessThan(100)
+    expect(playerState.actors[otherEnemy.id]?.stats.hp).toBe(100)
+
+    const enemyUser = makeActor('E-boss')
+    const burningPlayer = makeActor('P-hot')
+    burningPlayer.tags.push('burning')
+    const otherPlayer = makeActor('P-cold')
+    const aiState = makeState([burningPlayer, otherPlayer], [enemyUser])
+
+    const prevSeed = aiState.rngSeed
+    const resolution = resolveActionTargetIds(aiState, skill, enemyUser)
+    expect(resolution.ok).toBe(true)
+    if (resolution.ok) {
+      expect(resolution.targetIds).toEqual([burningPlayer.id])
+    }
+    aiState.rngSeed = prevSeed
+
+    const aiResult = useSkill(aiState, skill, enemyUser.id)
+    expect(aiResult.ok).toBe(true)
+    expect(aiState.actors[burningPlayer.id]?.stats.hp).toBeLessThan(100)
+    expect(aiState.actors[otherPlayer.id]?.stats.hp).toBe(100)
   })
 
   it('enforces charges on limited-use skills', () => {
