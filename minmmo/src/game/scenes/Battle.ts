@@ -58,8 +58,6 @@ interface LayoutMetrics {
   sidebar: LayoutRect;
   footer: LayoutRect;
   rightColumnX: number;
-  logWidth: number;
-  logY: number;
   targetX: number;
   commandPanel: LayoutRect;
   commandTabs: LayoutRect;
@@ -69,6 +67,9 @@ interface LayoutMetrics {
   commandRowSpacing: number;
   commandIconWidth: number;
   commandTextPadding: number;
+  logCard: LayoutRect;
+  logContent: LayoutRect;
+  logLabel: { x: number; y: number };
   playerCard: LayoutRect;
   enemyCard: { x: number; startY: number; width: number; height: number; spacing: number };
   cardLayout: CardLayoutMetrics;
@@ -117,9 +118,11 @@ export class Battle extends Phaser.Scene {
   private sidebarBackground!: Phaser.GameObjects.Graphics;
   private footerBackground!: Phaser.GameObjects.Graphics;
   private barGraphics!: Phaser.GameObjects.Graphics;
+  private logCardBackground?: Phaser.GameObjects.Graphics;
   private actorCards: Record<string, ActorCardElements> = {};
   private logText!: Phaser.GameObjects.Text;
   private logPlayer!: BattleLogPlayer;
+  private logLabel?: Phaser.GameObjects.Text;
   private headerTitle?: Phaser.GameObjects.Text;
   private commandTab: CommandTab = 'actions';
   private commandTabButtons: CommandTabButton[] = [];
@@ -168,11 +171,32 @@ export class Battle extends Phaser.Scene {
     this.sidebarBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
     this.footerBackground = this.add.graphics().setDepth(-10).setScrollFactor(0);
     this.barGraphics = this.add.graphics();
-    this.logText = this.add.text(this.layout.stage.x + 16, this.layout.logY, '', {
-      color: '#8b8fa3',
-      wordWrap: { width: this.layout.logWidth },
-    });
-    this.logPlayer = new BattleLogPlayer(this, this.logText);
+    this.logCardBackground = this.add.graphics().setDepth(-2).setScrollFactor(0);
+    const logLayout = this.layout.logContent;
+    const logLabelLayout = this.layout.logLabel;
+    const initialMaxLines = Math.max(4, Math.floor(logLayout.height / 20));
+    this.logLabel = this.add
+      .text(logLabelLayout.x, logLabelLayout.y, 'Battle Log', {
+        color: '#f4f6ff',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: 'Inter, system-ui, sans-serif',
+      })
+      .setScrollFactor(0)
+      .setDepth(5);
+    this.logText = this.add
+      .text(logLayout.x, logLayout.y, '', {
+        color: '#c4c8df',
+        fontSize: '14px',
+        fontFamily: '"JetBrains Mono", "Fira Mono", "Source Code Pro", monospace',
+        wordWrap: { width: logLayout.width },
+      })
+      .setScrollFactor(0)
+      .setDepth(5);
+    this.logText.setLineSpacing(6);
+    this.logText.setFixedSize(logLayout.width, logLayout.height);
+    this.logText.setPadding(0, 4, 0, 0);
+    this.logPlayer = new BattleLogPlayer(this, this.logText, { maxLines: initialMaxLines });
     this.logPlayer.prime(this.state.log);
 
     this.buildStaticUi();
@@ -935,10 +959,52 @@ export class Battle extends Phaser.Scene {
     sidebarRect.height = Math.max(stageRect.height, footerRect.y - stageRect.y - gap);
 
     const stageRight = stageRect.x + stageRect.width;
-    const logWidth = Math.max(240, stageRect.width - 32);
-    let logY = stageRect.y + stageRect.height - 120;
-    logY = Math.min(logY, footerRect.y - 120);
-    logY = Math.max(stageRect.y + 20, logY);
+    const logPadding = 16;
+    const logLabelHeight = 16;
+    const logLabelSpacing = 6;
+    const minLogContentWidth = 160;
+    const maxLogCardWidth = 360;
+    const computedLogHeight = Math.round(stageRect.height * 0.5);
+    const maxContentHeight = Math.max(160, stageRect.height - 48);
+    const logContentHeight = Phaser.Math.Clamp(
+      computedLogHeight,
+      120,
+      Math.min(220, maxContentHeight),
+    );
+    const logCardHeight = logPadding * 2 + logLabelHeight + logLabelSpacing + logContentHeight;
+    let availableLogWidth =
+      sidebarRect.width > 0 ? Math.max(0, sidebarRect.width - 32) : Math.max(0, stageRect.width - 32);
+    if (availableLogWidth <= 0) {
+      availableLogWidth = minLogContentWidth + logPadding * 2;
+    }
+    let logCardWidth = Math.min(maxLogCardWidth, availableLogWidth);
+    if (availableLogWidth >= minLogContentWidth + logPadding * 2) {
+      logCardWidth = Math.max(minLogContentWidth + logPadding * 2, logCardWidth);
+    }
+    const logContentWidth = Math.max(0, logCardWidth - logPadding * 2);
+    let logCardX = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - logCardWidth - 16;
+    if (logCardX < stageRect.x + 16) {
+      logCardX = stageRect.x + 16;
+    }
+    let logCardY = stageRect.y + stageRect.height - logCardHeight - 20;
+    logCardY = Math.min(logCardY, footerRect.y - logCardHeight - 16);
+    logCardY = Math.max(stageRect.y + 16, logCardY);
+    const logContentRect: LayoutRect = {
+      x: logCardX + logPadding,
+      y: logCardY + logPadding + logLabelHeight + logLabelSpacing,
+      width: Math.max(0, logContentWidth),
+      height: Math.max(0, logContentHeight),
+    };
+    const logCardRect: LayoutRect = {
+      x: logCardX,
+      y: logCardY,
+      width: Math.max(0, logCardWidth),
+      height: Math.max(0, logCardHeight),
+    };
+    const logLabelPosition = {
+      x: logCardX + logPadding,
+      y: logCardY + logPadding,
+    };
 
     const commandPanelPadding = 16;
     const commandPanel: LayoutRect = {
@@ -1013,9 +1079,8 @@ export class Battle extends Phaser.Scene {
     const enemyStartY =
       sidebarRect.width > 0 ? sidebarRect.y + cardPadding : playerCard.y + playerCard.height + cardPadding;
     const enemySpacing = enemyCardHeight + cardPadding;
-    const targetXCandidate = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - 160;
-    const targetX = Math.max(stageRect.x + 16, targetXCandidate);
-    const rightColumnX = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight + 16;
+    const targetX = Math.max(stageRect.x + 16, logCardX);
+    const rightColumnX = logCardX;
 
     return {
       header: headerRect,
@@ -1023,8 +1088,6 @@ export class Battle extends Phaser.Scene {
       sidebar: sidebarRect,
       footer: footerRect,
       rightColumnX,
-      logWidth,
-      logY,
       targetX,
       commandPanel,
       commandTabs,
@@ -1034,6 +1097,9 @@ export class Battle extends Phaser.Scene {
       commandRowSpacing,
       commandIconWidth,
       commandTextPadding,
+      logCard: logCardRect,
+      logContent: logContentRect,
+      logLabel: logLabelPosition,
       playerCard,
       enemyCard: { x: enemyColumnX, startY: enemyStartY, width: Math.max(0, enemyCardWidth), height: enemyCardHeight, spacing: enemySpacing },
       cardLayout,
@@ -1117,13 +1183,44 @@ export class Battle extends Phaser.Scene {
     }
   }
 
+  private layoutLogCard(layout: LayoutMetrics) {
+    if (!this.logCardBackground) {
+      return;
+    }
+    const card = layout.logCard;
+    const radius = 14;
+    const borderColor = 0x20264a;
+    const glowColorStart = 0x7c5cff;
+    const glowColorEnd = 0x58a2ff;
+    this.logCardBackground.clear();
+    this.logCardBackground.lineStyle(4, 0x000000, 0.16);
+    this.logCardBackground.strokeRoundedRect(card.x, card.y, card.width, card.height, radius);
+    this.logCardBackground.fillGradientStyle(0x151936, 0x151936, 0x11162a, 0x11162a, 0.95);
+    this.logCardBackground.fillRoundedRect(card.x, card.y, card.width, card.height, radius);
+    this.logCardBackground.lineStyle(2, borderColor, 0.82);
+    this.logCardBackground.strokeRoundedRect(card.x, card.y, card.width, card.height, radius);
+    this.logCardBackground.fillStyle(glowColorStart, 0.18);
+    this.logCardBackground.fillRect(card.x + 6, card.y + 6, Math.max(0, card.width - 12), 3);
+    this.logCardBackground.lineGradientStyle(2, glowColorStart, glowColorEnd, 0.55, 0.55);
+    this.logCardBackground.strokeRoundedRect(card.x, card.y, card.width, card.height, radius);
+  }
+
   private layoutUi() {
     this.layout = this.computeLayout();
     const layout = this.layout;
     if (!layout) return;
     this.redrawBackgrounds(layout);
-    this.logText.setPosition(layout.stage.x + 16, layout.logY);
-    this.logText.setWordWrapWidth(layout.logWidth);
+    this.layoutLogCard(layout);
+    this.logText.setPosition(layout.logContent.x, layout.logContent.y);
+    this.logText.setWordWrapWidth(layout.logContent.width);
+    this.logText.setFixedSize(layout.logContent.width, layout.logContent.height);
+    if (this.logPlayer) {
+      const maxLogLines = Math.max(4, Math.floor(layout.logContent.height / 20));
+      this.logPlayer.setMaxLines(maxLogLines);
+    }
+    if (this.logLabel) {
+      this.logLabel.setPosition(layout.logLabel.x, layout.logLabel.y);
+    }
     if (this.headerTitle) {
       this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
     }
