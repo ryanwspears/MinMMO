@@ -18,6 +18,7 @@ export type EffectKind =
   | 'modifyStat' | 'shield' | 'taunt'
   | 'flee' | 'revive' | 'summon'
   | 'giveItem' | 'removeItem'
+  | 'preventAction'
 
 export type ValueType = 'flat' | 'percent' | 'formula'
 export interface Formula { expr: string }
@@ -30,6 +31,7 @@ export interface Effect {
   stat?: 'atk'|'def'|'maxHp'|'maxSta'|'maxMp'
   statusId?: StatusId; statusTurns?: number; cleanseTags?: string[]
   shieldId?: string
+  message?: string
   selector?: TargetSelector
   onlyIf?: Filter
 }

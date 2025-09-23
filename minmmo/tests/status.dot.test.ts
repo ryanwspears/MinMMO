@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { toStatuses } from '@content/adapters'
 import type { RuntimeEffect, RuntimeSkill, RuntimeStatusTemplate } from '@content/adapters'
 import { useSkill, endTurn } from '@engine/battle/actions'
 import { applyStatus, tickEndOfTurn, tickStartOfTurn } from '@engine/battle/status'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
 import { DEFAULTS } from '@config/defaults'
+import type { GameConfig } from '@config/schema'
 import * as configStore from '@config/store'
 import * as registry from '@content/registry'
 
@@ -95,17 +97,18 @@ function statusTemplate(partial: Partial<RuntimeStatusTemplate> & { id: string }
 let configSpy: ReturnType<typeof vi.spyOn> | undefined
 let statusesSpy: ReturnType<typeof vi.spyOn> | undefined
 let registryMap: Record<string, RuntimeStatusTemplate>
+let baseConfig: GameConfig
 
 describe('status engine - damage over time', () => {
   beforeEach(() => {
-    const cfg = JSON.parse(JSON.stringify(DEFAULTS))
-    cfg.balance.BASE_HIT = 1
-    cfg.balance.BASE_CRIT = 0
-    cfg.balance.DODGE_FLOOR = 0
-    cfg.balance.HIT_CEIL = 1
-    cfg.balance.ELEMENT_MATRIX = { neutral: { neutral: 1 } }
-    cfg.balance.RESISTS_BY_TAG = {}
-    configSpy = vi.spyOn(configStore, 'CONFIG').mockReturnValue(cfg)
+    baseConfig = JSON.parse(JSON.stringify(DEFAULTS))
+    baseConfig.balance.BASE_HIT = 1
+    baseConfig.balance.BASE_CRIT = 0
+    baseConfig.balance.DODGE_FLOOR = 0
+    baseConfig.balance.HIT_CEIL = 1
+    baseConfig.balance.ELEMENT_MATRIX = { neutral: { neutral: 1 } }
+    baseConfig.balance.RESISTS_BY_TAG = {}
+    configSpy = vi.spyOn(configStore, 'CONFIG').mockReturnValue(baseConfig)
 
     registryMap = {}
     statusesSpy = vi.spyOn(registry, 'Statuses').mockImplementation(() => registryMap)
@@ -225,34 +228,23 @@ describe('status engine - damage over time', () => {
     expect(actor.statuses[0]?.stacks).toBe(3)
   })
 
-  it('prevents actions when onTurnStart calls preventAction', () => {
-    registryMap.paralyze = statusTemplate({
-      id: 'paralyze',
-      name: 'Paralyze',
-      durationTurns: 1,
-      hooks: {
-        onApply: [],
-        onTurnStart: [
-          {
-            kind: 'damage',
-            value: {
-              kind: 'flat',
-              resolve: (_user, target, ctx) => {
-                ctx.control?.preventAction(`${target.name} is paralyzed!`)
-                return 0
-              },
-              rawAmount: 0,
+  it('prevents actions when a config hook uses preventAction', () => {
+    baseConfig.statuses = {
+      paralyze: {
+        id: 'paralyze',
+        name: 'Paralyze',
+        durationTurns: 1,
+        hooks: {
+          onTurnStart: [
+            {
+              kind: 'preventAction',
+              message: 'Hero is paralyzed!',
             },
-            canCrit: false,
-            canMiss: false,
-          } as RuntimeEffect,
-        ],
-        onTurnEnd: [],
-        onDealDamage: [],
-        onTakeDamage: [],
-        onExpire: [],
+          ],
+        },
       },
-    })
+    }
+    registryMap = toStatuses(baseConfig)
 
     const player = makeActor('Hero', { hp: 30, maxHp: 30 })
     const enemy = makeActor('Goblin', { hp: 20, maxHp: 20 })
