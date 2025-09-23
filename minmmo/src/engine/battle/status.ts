@@ -10,6 +10,7 @@ import type {
   Actor,
   ActorStatusModifierCache,
   BattleState,
+  Resource,
   Status,
   StatusModifierSnapshot,
 } from './types'
@@ -140,7 +141,10 @@ export function tickEndOfTurn(state: BattleState, actorOrId: string | Actor): vo
   }
 
   const statuses = ensureStatuses(actor)
-  if (statuses.length === 0 && !state.taunts[actor.id]) {
+  const regenSnapshot = cloneResourceRegenMap(actor.statusModifiers?.resourceRegenPerTurn)
+  const hasRegen = regenSnapshot && Object.keys(regenSnapshot).length > 0
+
+  if (statuses.length === 0 && !state.taunts[actor.id] && !hasRegen) {
     return
   }
 
@@ -165,6 +169,7 @@ export function tickEndOfTurn(state: BattleState, actorOrId: string | Actor): vo
   }
 
   actor.statuses = next
+  applyResourceRegen(actor, regenSnapshot)
   tickTaunt(state, actor)
 }
 
@@ -506,6 +511,49 @@ function ensureModifierCache(actor: Actor): ActorStatusModifierCache {
   return actor.statusModifiers
 }
 
+function cloneResourceRegenMap(
+  source: Partial<Record<Resource, number>> | undefined,
+): Partial<Record<Resource, number>> | undefined {
+  if (!source) {
+    return undefined
+  }
+
+  const copy: Partial<Record<Resource, number>> = {}
+  let hasValue = false
+  for (const [key, value] of Object.entries(source)) {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric) || numeric === 0) {
+      continue
+    }
+    copy[key as Resource] = numeric
+    hasValue = true
+  }
+
+  return hasValue ? copy : undefined
+}
+
+function applyResourceRegen(
+  actor: Actor,
+  regen: Partial<Record<Resource, number>> | undefined,
+): void {
+  if (!regen) {
+    return
+  }
+
+  for (const [resource, amount] of Object.entries(regen) as [Resource, number][]) {
+    const numeric = Number(amount)
+    if (!Number.isFinite(numeric) || numeric === 0) {
+      continue
+    }
+
+    const [valueKey, maxKey] = resourceKeys(resource)
+    const current = actor.stats[valueKey]
+    const max = actor.stats[maxKey]
+    const next = clamp(current + numeric, 0, max)
+    actor.stats[valueKey] = next
+  }
+}
+
 function applyStatDelta(actor: Actor, stat: 'atk' | 'def', previous: number, next: number) {
   const delta = next - previous
   if (delta === 0) {
@@ -714,7 +762,7 @@ function modifierMultiplier(
   if (!map) {
     return 1
   }
-  const keys: string[] = ['all', ...categories]
+  const keys: string[] = ['all', ...categories.filter((key): key is string => Boolean(key))]
   let total = 0
   const seen = new Set<string>()
   for (const key of keys) {
