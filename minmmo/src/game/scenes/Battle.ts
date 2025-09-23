@@ -4,7 +4,7 @@ import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
 import { useItem, useSkill, endTurn } from '@engine/battle/actions';
-import { resolveTargets, matchesFilter } from '@engine/battle/targeting';
+import { resolveTargets } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry } from '@engine/battle/types';
 import {
   PlayerProfile,
@@ -219,35 +219,19 @@ export class Battle extends Phaser.Scene {
     userId: string,
     actionName?: string,
   ): string[] {
-    const allies = this.state.sidePlayer.includes(userId) ? this.state.sidePlayer : this.state.sideEnemy;
-    const enemies = this.state.sidePlayer.includes(userId) ? this.state.sideEnemy : this.state.sidePlayer;
-    let pool: string[] = [];
-    switch (selector.side) {
-      case 'self':
-        pool = [userId];
-        break;
-      case 'ally':
-        pool = allies.slice();
-        break;
-      case 'enemy':
-        pool = enemies.slice();
-        break;
-      case 'any':
-        pool = [...allies, ...enemies];
-        break;
-      default:
-        pool = enemies.slice();
-        break;
+    const targetingSeed = this.state.rngSeed;
+    const candidateSelector: RuntimeSkill['targeting'] = {
+      ...selector,
+      mode: 'condition',
+      count: undefined,
+      includeDead: selector.includeDead ?? false,
+    };
+    let filtered: string[];
+    try {
+      filtered = resolveTargets(this.state, candidateSelector, userId);
+    } finally {
+      this.state.rngSeed = targetingSeed;
     }
-    const includeDead = selector.includeDead ?? false;
-    const condition = selector.condition;
-    const filtered = pool.filter((id) => {
-      const actor = this.state.actors[id];
-      if (!actor) return false;
-      if (!includeDead && !actor.alive) return false;
-      if (condition && !matchesFilter(actor, condition)) return false;
-      return true;
-    });
     if (filtered.length === 0) {
       const label = actionName ?? 'This action';
       this.state.log.push(`${label} has no valid targets.`);
