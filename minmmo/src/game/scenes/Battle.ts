@@ -29,8 +29,21 @@ interface TargetButton {
 }
 
 const PLAYER_ID = 'player';
-const BAR_WIDTH = 200;
-const BAR_HEIGHT = 12;
+
+interface CardLayoutMetrics {
+  padding: number;
+  portraitDiameter: number;
+  portraitX: number;
+  portraitY: number;
+  textX: number;
+  nameY: number;
+  classY: number;
+  levelY: number;
+  barsY: number;
+  barHeight: number;
+  barSpacing: number;
+  statusY: number;
+}
 
 interface LayoutRect {
   x: number;
@@ -53,11 +66,20 @@ interface LayoutMetrics {
   skillColumnX: number;
   itemColumnX: number;
   commandsY: number;
-  playerLabelY: number;
-  playerBarY: number;
-  enemyLabelStart: number;
-  enemyBarStart: number;
-  enemySpacing: number;
+  playerCard: LayoutRect;
+  enemyCard: { x: number; startY: number; width: number; height: number; spacing: number };
+  cardLayout: CardLayoutMetrics;
+}
+
+interface ActorCardElements {
+  container: Phaser.GameObjects.Container;
+  background: Phaser.GameObjects.Graphics;
+  portrait: Phaser.GameObjects.Ellipse;
+  nameText: Phaser.GameObjects.Text;
+  classText: Phaser.GameObjects.Text;
+  levelText: Phaser.GameObjects.Text;
+  statusText: Phaser.GameObjects.Text;
+  barArea: { x: number; y: number; width: number; height: number; spacing: number };
 }
 
 export class Battle extends Phaser.Scene {
@@ -70,8 +92,7 @@ export class Battle extends Phaser.Scene {
   private sidebarBackground!: Phaser.GameObjects.Graphics;
   private footerBackground!: Phaser.GameObjects.Graphics;
   private barGraphics!: Phaser.GameObjects.Graphics;
-  private actorLabels: Record<string, Phaser.GameObjects.Text> = {};
-  private statusLabels: Record<string, Phaser.GameObjects.Text> = {};
+  private actorCards: Record<string, ActorCardElements> = {};
   private logText!: Phaser.GameObjects.Text;
   private logPlayer!: BattleLogPlayer;
   private headerTitle?: Phaser.GameObjects.Text;
@@ -146,25 +167,18 @@ export class Battle extends Phaser.Scene {
       color: '#e6e8ef',
       fontSize: '18px',
     });
-    const enemyCount = this.state.sideEnemy.length;
-    this.actorLabels = {};
-    this.statusLabels = {};
-    const playerText = this.add.text(layout.stage.x + 16, layout.playerLabelY, '', { color: '#e6e8ef' });
-    const playerStatus = this.add.text(layout.stage.x + 16, layout.playerLabelY + 28, '', {
-      color: '#7c5cff',
-      wordWrap: { width: Math.max(220, layout.stage.width - 32) },
-    });
-    this.actorLabels[this.playerId] = playerText;
-    this.statusLabels[this.playerId] = playerStatus;
-
-    for (let i = 0; i < enemyCount; i += 1) {
-      const actorId = this.state.sideEnemy[i];
-      const baseY = layout.enemyLabelStart + i * layout.enemySpacing;
-      this.actorLabels[actorId] = this.add.text(layout.rightColumnX, baseY, '', { color: '#f5c6a5' });
-      this.statusLabels[actorId] = this.add.text(layout.rightColumnX, baseY + 24, '', {
-        color: '#7c5cff',
-        wordWrap: { width: Math.max(220, layout.sidebar.width - 32) },
-      });
+    for (const card of Object.values(this.actorCards)) {
+      card.container.destroy(true);
+    }
+    this.actorCards = {};
+    const playerActor = this.state.actors[this.playerId];
+    if (playerActor) {
+      this.actorCards[playerActor.id] = this.createActorCard(playerActor);
+    }
+    for (const enemyId of this.state.sideEnemy) {
+      const actor = this.state.actors[enemyId];
+      if (!actor) continue;
+      this.actorCards[enemyId] = this.createActorCard(actor);
     }
 
     this.endTurnButton = this.add
@@ -174,6 +188,93 @@ export class Battle extends Phaser.Scene {
       if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
       void this.handleEndTurn();
     });
+  }
+
+  private createActorCard(actor: Actor): ActorCardElements {
+    const container = this.add.container(0, 0);
+    container.setDepth(5);
+    const background = this.add.graphics();
+    container.add(background);
+
+    const portrait = this.add.ellipse(0, 0, 56, 56, 0x1d223d, 0.9);
+    portrait.setStrokeStyle(2, 0x2f3659, 0.9);
+    container.add(portrait);
+
+    const nameText = this.add.text(0, 0, actor.name, {
+      color: '#f4f6ff',
+      fontSize: '16px',
+      fontStyle: 'bold',
+    });
+    const classText = this.add.text(0, 0, actor.clazz ?? 'Adventurer', {
+      color: '#a99efc',
+      fontSize: '13px',
+    });
+    const levelText = this.add.text(0, 0, `Lv. ${actor.stats.lv}`, {
+      color: '#8b8fa3',
+      fontSize: '12px',
+    });
+    const statusText = this.add.text(0, 0, '', {
+      color: '#9da3c3',
+      fontSize: '12px',
+      wordWrap: { width: 180 },
+    });
+
+    container.add(nameText);
+    container.add(classText);
+    container.add(levelText);
+    container.add(statusText);
+
+    return {
+      container,
+      background,
+      portrait,
+      nameText,
+      classText,
+      levelText,
+      statusText,
+      barArea: { x: 0, y: 0, width: 0, height: 0, spacing: 0 },
+    };
+  }
+
+  private layoutActorCard(card: ActorCardElements, rect: LayoutRect, metrics: CardLayoutMetrics) {
+    card.container.setPosition(rect.x, rect.y);
+    card.container.setSize(rect.width, rect.height);
+
+    const radius = 18;
+    card.background.clear();
+    card.background.fillGradientStyle(0x1a1f3c, 0x1a1f3c, 0x13172c, 0x151a33, 0.95);
+    card.background.fillRoundedRect(0, 0, rect.width, rect.height, radius);
+    card.background.lineStyle(2, 0x262d4f, 0.75);
+    card.background.strokeRoundedRect(0, 0, rect.width, rect.height, radius);
+    card.background.fillStyle(0xffffff, 0.04);
+    card.background.fillRoundedRect(2, 2, rect.width - 4, Math.max(10, rect.height * 0.28), {
+      tl: radius - 2,
+      tr: radius - 2,
+      bl: Math.max(6, radius - 12),
+      br: Math.max(6, radius - 12),
+    });
+
+    card.portrait.setPosition(metrics.portraitX, metrics.portraitY);
+    card.portrait.setDisplaySize(metrics.portraitDiameter, metrics.portraitDiameter);
+
+    const contentWidth = Math.max(0, rect.width - metrics.textX - metrics.padding);
+    const textMaxWidth = contentWidth;
+    card.nameText.setPosition(metrics.textX, metrics.nameY);
+    card.nameText.setMaxWidth(textMaxWidth);
+    card.classText.setPosition(metrics.textX, metrics.classY);
+    card.classText.setMaxWidth(textMaxWidth);
+    card.levelText.setPosition(metrics.textX, metrics.levelY);
+    card.levelText.setMaxWidth(textMaxWidth);
+    card.statusText.setPosition(metrics.textX, metrics.statusY);
+    card.statusText.setWordWrapWidth(Math.max(1, textMaxWidth));
+
+    card.barArea = {
+      x: metrics.textX,
+      y: metrics.barsY,
+      width: Math.max(0, contentWidth),
+      height: metrics.barHeight,
+      spacing: metrics.barSpacing,
+    };
   }
 
   private renderActions() {
@@ -588,11 +689,51 @@ export class Battle extends Phaser.Scene {
     if (itemColumnX + 120 > stageRight) {
       itemColumnX = skillColumnX;
     }
-    const playerLabelY = stageRect.y + 16;
-    const playerBarY = playerLabelY + 60;
-    const enemyLabelStart = sidebarRect.y + 16;
-    const enemySpacing = 80;
-    const enemyBarStart = enemyLabelStart + 60;
+    const computeCardWidth = (available: number) => {
+      const safe = Math.max(0, available);
+      if (safe <= 0) return 0;
+      if (safe < 160) return safe;
+      return Math.min(safe, 340);
+    };
+
+    const cardPadding = 16;
+    const portraitDiameter = 56;
+    const barHeight = 16;
+    const barSpacing = barHeight + 6;
+    const barsY = cardPadding + portraitDiameter + 6;
+    const statusY = barsY + barSpacing * 2 + barHeight + 8;
+    const cardHeight = statusY + Math.max(28, cardPadding + 12);
+    const cardLayout: CardLayoutMetrics = {
+      padding: cardPadding,
+      portraitDiameter,
+      portraitX: cardPadding + portraitDiameter / 2,
+      portraitY: cardPadding + portraitDiameter / 2,
+      textX: cardPadding + portraitDiameter + 12,
+      nameY: cardPadding,
+      classY: cardPadding + 24,
+      levelY: cardPadding + 46,
+      barsY,
+      barHeight,
+      barSpacing,
+      statusY,
+    };
+
+    const playerCardWidth = computeCardWidth(stageRect.width - cardPadding * 2);
+    const playerCard: LayoutRect = {
+      x: stageRect.x + cardPadding,
+      y: stageRect.y + cardPadding,
+      width: Math.max(0, playerCardWidth),
+      height: cardHeight,
+    };
+
+    const sidebarAvailableWidth = sidebarRect.width > 0 ? sidebarRect.width : stageRect.width;
+    const enemyCardWidth = computeCardWidth(sidebarAvailableWidth - cardPadding * 2);
+    const enemyCardHeight = cardHeight;
+    const enemyColumnX =
+      sidebarRect.width > 0 ? sidebarRect.x + cardPadding : Math.max(stageRect.x + cardPadding, playerCard.x);
+    const enemyStartY =
+      sidebarRect.width > 0 ? sidebarRect.y + cardPadding : playerCard.y + playerCard.height + cardPadding;
+    const enemySpacing = enemyCardHeight + cardPadding;
     const targetXCandidate = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - 160;
     const targetX = Math.max(stageRect.x + 16, targetXCandidate);
     const endTurnX = Math.max(skillColumnX, footerRect.x + footerRect.width - 140);
@@ -613,11 +754,9 @@ export class Battle extends Phaser.Scene {
       skillColumnX,
       itemColumnX,
       commandsY,
-      playerLabelY,
-      playerBarY,
-      enemyLabelStart,
-      enemyBarStart,
-      enemySpacing,
+      playerCard,
+      enemyCard: { x: enemyColumnX, startY: enemyStartY, width: Math.max(0, enemyCardWidth), height: enemyCardHeight, spacing: enemySpacing },
+      cardLayout,
     };
   }
 
@@ -708,33 +847,12 @@ export class Battle extends Phaser.Scene {
     if (this.headerTitle) {
       this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
     }
-    const playerLabel = this.actorLabels[this.playerId];
-    if (playerLabel) {
-      playerLabel.setPosition(layout.stage.x + 16, layout.playerLabelY);
-    }
     if (this.endTurnButton) {
       this.endTurnButton.setPosition(layout.endTurnX, layout.endTurnY);
     }
     if (this.fleeButton) {
       this.fleeButton.setPosition(layout.endTurnX - 120, layout.endTurnY);
     }
-    const playerStatus = this.statusLabels[this.playerId];
-    if (playerStatus) {
-      playerStatus.setPosition(layout.stage.x + 16, layout.playerLabelY + 28);
-      playerStatus.setWordWrapWidth(Math.max(220, layout.stage.width - 32));
-    }
-    this.state.sideEnemy.forEach((enemyId, index) => {
-      const label = this.actorLabels[enemyId];
-      const status = this.statusLabels[enemyId];
-      const baseY = layout.enemyLabelStart + index * layout.enemySpacing;
-      if (label) {
-        label.setPosition(layout.rightColumnX, baseY);
-      }
-      if (status) {
-        status.setPosition(layout.rightColumnX, baseY + 24);
-        status.setWordWrapWidth(Math.max(220, Math.max(0, layout.sidebar.width - 32)));
-      }
-    });
 
     let skillY = layout.commandsY;
     for (const btn of this.skillButtons) {
@@ -996,52 +1114,130 @@ export class Battle extends Phaser.Scene {
     const layout = this.layout ?? this.computeLayout();
     this.layout = layout;
     if (player) {
-      this.updateActorPanel(player, layout.stage.x + 16, layout.playerBarY);
+      this.updateActorPanel(player, layout.playerCard);
     }
     this.state.sideEnemy.forEach((enemyId, index) => {
       const actor = this.state.actors[enemyId];
       if (!actor) return;
-      const baseY = layout.enemyBarStart + index * layout.enemySpacing;
-      this.updateActorPanel(actor, layout.rightColumnX, baseY);
+      const cardRect: LayoutRect = {
+        x: layout.enemyCard.x,
+        y: layout.enemyCard.startY + index * layout.enemyCard.spacing,
+        width: layout.enemyCard.width,
+        height: layout.enemyCard.height,
+      };
+      this.updateActorPanel(actor, cardRect);
     });
     this.logPlayer.sync(this.state.log);
   }
 
-  private updateActorPanel(actor: Actor, x: number, baseY: number) {
-    const label = this.actorLabels[actor.id];
-    const statusLabel = this.statusLabels[actor.id];
-    const { stats } = actor;
-    if (label) {
-      label.setText(`${actor.name} — HP ${Math.max(0, Math.floor(stats.hp))}/${stats.maxHp}  STA ${stats.sta}/${stats.maxSta}  MP ${stats.mp}/${stats.maxMp}`);
+  private updateActorPanel(actor: Actor, rect: LayoutRect) {
+    const layout = this.layout ?? this.computeLayout();
+    const cardLayout = layout.cardLayout;
+    let card = this.actorCards[actor.id];
+    if (!card) {
+      card = this.createActorCard(actor);
+      this.actorCards[actor.id] = card;
     }
-    if (statusLabel) {
-      const statuses = actor.statuses.length
-        ? actor.statuses
-            .map((s) => {
-              const template = Statuses()[s.id];
-              const icon = template?.icon ?? template?.name ?? s.id;
-              const stackStr = s.stacks && s.stacks > 1 ? ` x${s.stacks}` : '';
-              return `${icon ?? s.id} (${s.turns}${stackStr})`;
-            })
-            .join(', ')
-        : 'None';
-      statusLabel.setText(`Status: ${statuses}`);
-    }
-    this.drawBars(x, baseY, stats);
+    this.layoutActorCard(card, rect, cardLayout);
+
+    card.nameText.setText(actor.name);
+    card.classText.setText(actor.clazz ?? 'Adventurer');
+    card.levelText.setText(`Lv. ${actor.stats.lv}`);
+
+    const statuses = actor.statuses.length
+      ? actor.statuses
+          .map((s) => {
+            const template = Statuses()[s.id];
+            const icon = template?.icon ?? template?.name ?? s.id;
+            const stackStr = s.stacks && s.stacks > 1 ? ` x${s.stacks}` : '';
+            return `${icon ?? s.id} (${s.turns}${stackStr})`;
+          })
+          .join(', ')
+      : 'None';
+    card.statusText.setText(`Status: ${statuses}`);
+
+    this.drawBars(card, actor.stats);
   }
 
-  private drawBars(x: number, y: number, stats: Actor['stats']) {
-    this.drawBar(x, y, BAR_WIDTH, BAR_HEIGHT, stats.hp / Math.max(1, stats.maxHp), 0xff4f64, '#2b2f45');
-    this.drawBar(x, y + 14, BAR_WIDTH, BAR_HEIGHT, stats.sta / Math.max(1, stats.maxSta || 1), 0x3ab0ff, '#2b2f45');
-    this.drawBar(x, y + 28, BAR_WIDTH, BAR_HEIGHT, stats.mp / Math.max(1, stats.maxMp || 1), 0x7c5cff, '#2b2f45');
+  private drawBars(card: ActorCardElements, stats: Actor['stats']) {
+    const area = card.barArea;
+    if (area.width <= 0 || area.height <= 0) {
+      return;
+    }
+    const baseX = card.container.x + area.x;
+    const baseY = card.container.y + area.y;
+    this.drawBar(baseX, baseY, area.width, area.height, stats.hp / Math.max(1, stats.maxHp), 0xff4f64);
+    this.drawBar(
+      baseX,
+      baseY + area.spacing,
+      area.width,
+      area.height,
+      stats.sta / Math.max(1, stats.maxSta || 1),
+      0x3ab0ff,
+    );
+    this.drawBar(
+      baseX,
+      baseY + area.spacing * 2,
+      area.width,
+      area.height,
+      stats.mp / Math.max(1, stats.maxMp || 1),
+      0x7c5cff,
+    );
   }
 
-  private drawBar(x: number, y: number, width: number, height: number, pct: number, color: number, background: string) {
-    this.barGraphics.fillStyle(Phaser.Display.Color.HexStringToColor(background).color, 1);
-    this.barGraphics.fillRect(x, y, width, height);
-    this.barGraphics.fillStyle(color, 1);
-    const clamped = Math.max(0, Math.min(1, pct));
-    this.barGraphics.fillRect(x, y, width * clamped, height);
+  private drawBar(x: number, y: number, width: number, height: number, pct: number, color: number) {
+    const clamped = Phaser.Math.Clamp(pct, 0, 1);
+    const radius = height / 2;
+
+    this.barGraphics.fillStyle(0x10142a, 0.95);
+    this.barGraphics.fillRoundedRect(x, y, width, height, radius);
+    this.barGraphics.lineStyle(2, 0x060914, 0.7);
+    this.barGraphics.strokeRoundedRect(x, y, width, height, radius);
+
+    const innerX = x + 2;
+    const innerY = y + 2;
+    const innerWidth = Math.max(0, width - 4);
+    const innerHeight = Math.max(0, height - 4);
+    const innerRadius = Math.max(0, radius - 2);
+
+    this.barGraphics.fillStyle(0x000000, 0.25);
+    this.barGraphics.fillRoundedRect(innerX, innerY, innerWidth, innerHeight, innerRadius);
+
+    const filledWidth = Math.max(0, innerWidth * clamped);
+    if (filledWidth > 0) {
+      const topColor = this.mixColor(color, 0xffffff, 0.3);
+      const bottomColor = this.mixColor(color, 0x000000, 0.35);
+      this.barGraphics.fillGradientStyle(topColor, topColor, bottomColor, bottomColor, 1);
+      this.barGraphics.fillRoundedRect(innerX, innerY, filledWidth, innerHeight, innerRadius);
+
+      this.barGraphics.fillStyle(0xffffff, 0.12);
+      this.barGraphics.fillRoundedRect(innerX, innerY, filledWidth, Math.max(2, innerHeight * 0.45), innerRadius);
+
+      if (filledWidth > 4) {
+        this.barGraphics.lineStyle(1, 0xffffff, 0.15);
+        this.barGraphics.strokeRoundedRect(
+          innerX + 1,
+          innerY + 1,
+          filledWidth - 2,
+          Math.max(0, innerHeight - 2),
+          Math.max(0, innerRadius - 1),
+        );
+      }
+    }
+  }
+
+  private mixColor(color: number, target: number, amount: number): number {
+    const clampAmount = Phaser.Math.Clamp(amount, 0, 1);
+    const cr = (color >> 16) & 0xff;
+    const cg = (color >> 8) & 0xff;
+    const cb = color & 0xff;
+    const tr = (target >> 16) & 0xff;
+    const tg = (target >> 8) & 0xff;
+    const tb = target & 0xff;
+    const r = Math.round(cr + (tr - cr) * clampAmount);
+    const g = Math.round(cg + (tg - cg) * clampAmount);
+    const b = Math.round(cb + (tb - cb) * clampAmount);
+    return (r << 16) | (g << 8) | b;
   }
 
   private checkOutcome() {
