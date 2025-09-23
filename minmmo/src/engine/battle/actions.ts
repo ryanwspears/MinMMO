@@ -59,6 +59,30 @@ export function useItem(
   return executeAction(state, item, userId, targetIds)
 }
 
+export function attemptFlee(state: BattleState, actorId: string): UseResult {
+  if (state.ended) {
+    pushLog(state, 'The battle is already over.')
+    return { ok: false, log: state.log, state }
+  }
+
+  const actor = state.actors[actorId]
+  if (!actor) {
+    pushLog(state, `Unknown actor ${actorId} tried to flee.`)
+    return { ok: false, log: state.log, state }
+  }
+
+  if (!actor.alive) {
+    pushLog(state, `${actor.name} cannot flee while defeated.`)
+    return { ok: false, log: state.log, state }
+  }
+
+  const fled = resolveFleeAttempt(state, actor)
+  if (fled) {
+    evaluateOutcome(state)
+  }
+  return { ok: fled, log: state.log, state }
+}
+
 export function endTurn(state: BattleState): BattleState {
   if (state.ended) {
     return state
@@ -288,6 +312,25 @@ function executeAction(
   return { ok: true, log: state.log, state }
 }
 
+function resolveFleeAttempt(state: BattleState, actor: Actor): boolean {
+  if (state.ended) {
+    return state.ended.reason === 'fled'
+  }
+
+  const baseChance = CONFIG().balance.FLEE_BASE
+  const normalized = Number.isFinite(baseChance) ? baseChance : 0
+  const chance = clamp(normalized, 0, 1)
+  const roll = nextRandom(state)
+  if (roll < chance) {
+    state.ended = { reason: 'fled' }
+    pushLog(state, `${actor.name} fled the battle!`)
+    return true
+  }
+
+  pushLog(state, `${actor.name} tried to flee but failed.`)
+  return false
+}
+
 function normalizeSelector(selector: RuntimeTargetSelector): RuntimeTargetSelector {
   const includeDead = selector.includeDead ?? false
   const count = selector.count ?? (selector.mode === 'random' ? 1 : undefined)
@@ -468,8 +511,7 @@ function applyEffect(
       break
     }
     case 'flee': {
-      state.ended = { reason: 'fled' }
-      pushLog(state, `${user.name} fled the battle!`)
+      resolveFleeAttempt(state, user)
       break
     }
     case 'modifyStat': {

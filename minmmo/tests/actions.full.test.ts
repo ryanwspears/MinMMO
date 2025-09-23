@@ -8,6 +8,7 @@ import {
   endTurn,
   resolveActionTargetIds,
   collectUsableTargets,
+  attemptFlee,
 } from '@engine/battle/actions'
 import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
@@ -319,6 +320,34 @@ describe('battle actions advanced behaviour', () => {
     expect(aiState.actors[otherPlayer.id]?.stats.hp).toBe(100)
   })
 
+  it('ends the battle when fleeing succeeds', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState([player], [enemy])
+    const cfg = configStore.CONFIG()
+    cfg.balance.FLEE_BASE = 1
+
+    const result = attemptFlee(state, player.id)
+
+    expect(result.ok).toBe(true)
+    expect(state.ended).toEqual({ reason: 'fled' })
+    expect(state.log[state.log.length - 1]).toContain('fled the battle')
+  })
+
+  it('logs a failure when fleeing fails', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState([player], [enemy])
+    const cfg = configStore.CONFIG()
+    cfg.balance.FLEE_BASE = 0
+
+    const result = attemptFlee(state, player.id)
+
+    expect(result.ok).toBe(false)
+    expect(state.ended).toBeUndefined()
+    expect(state.log[state.log.length - 1]).toContain('tried to flee but failed')
+  })
+
   it('resolves canUse-gated random targets deterministically for players and enemies', () => {
     const randomSkill = makeSkill({
       id: 'precise-shot',
@@ -525,6 +554,8 @@ describe('battle actions advanced behaviour', () => {
     const player = makeActor('P1')
     const enemy = makeActor('E1')
     const state = makeState([player], [enemy])
+    const cfg = configStore.CONFIG()
+    cfg.balance.FLEE_BASE = 1
 
     const flee = makeSkill({
       name: 'Escape',
