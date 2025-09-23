@@ -69,6 +69,7 @@ function flatEffect(kind: RuntimeEffect['kind'], amount: number): RuntimeEffect 
     },
     canCrit: false,
     canMiss: false,
+    sharedAccuracyRoll: true,
   }
 }
 
@@ -203,6 +204,7 @@ describe('status engine - damage over time', () => {
             },
             canCrit: false,
             canMiss: false,
+            sharedAccuracyRoll: true,
           } as RuntimeEffect,
         ],
         onDealDamage: [],
@@ -278,6 +280,7 @@ describe('status engine - damage over time', () => {
             },
             canCrit: false,
             canMiss: false,
+            sharedAccuracyRoll: true,
           } as RuntimeEffect,
         ],
       } as RuntimeSkill

@@ -48,6 +48,7 @@ function makeContext(): RuleContext {
     },
     canCrit: false,
     canMiss: false,
+    sharedAccuracyRoll: true,
   }
   const action: RuntimeSkill = {
     id: 'skill',
