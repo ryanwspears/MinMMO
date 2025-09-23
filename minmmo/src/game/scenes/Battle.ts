@@ -3,7 +3,7 @@ import { CONFIG } from '@config/store';
 import { Items, Skills, Enemies, Statuses } from '@content/registry';
 import type { RuntimeItem, RuntimeSkill } from '@content/adapters';
 import { createState } from '@engine/battle/state';
-import { useItem, useSkill, endTurn, collectUsableTargets } from '@engine/battle/actions';
+import { useItem, useSkill, endTurn, collectUsableTargets, attemptFlee } from '@engine/battle/actions';
 import { tickStartOfTurn } from '@engine/battle/status';
 import { resolveTargets } from '@engine/battle/targeting';
 import type { Actor, BattleState, InventoryEntry, UseResult } from '@engine/battle/types';
@@ -54,6 +54,7 @@ export class Battle extends Phaser.Scene {
   private skillButtons: Phaser.GameObjects.Text[] = [];
   private itemButtons: Phaser.GameObjects.Text[] = [];
   private endTurnButton?: Phaser.GameObjects.Text;
+  private fleeButton?: Phaser.GameObjects.Text;
   private targetPrompt?: Phaser.GameObjects.Text;
   private targetButtons: TargetButton[] = [];
   private outcomeHandled = false;
@@ -145,8 +146,21 @@ export class Battle extends Phaser.Scene {
   private renderActions() {
     for (const btn of this.skillButtons) btn.destroy();
     for (const btn of this.itemButtons) btn.destroy();
+    if (this.fleeButton) {
+      this.fleeButton.destroy();
+      this.fleeButton = undefined;
+    }
     this.skillButtons = [];
     this.itemButtons = [];
+
+    const layout = this.layout ?? this.computeLayout();
+    this.fleeButton = this.add
+      .text(layout.endTurnX - 120, layout.endTurnY, '[Flee]', { color: '#7c5cff' })
+      .setInteractive({ useHandCursor: true });
+    this.fleeButton.on('pointerdown', () => {
+      if (this.state.ended || this.busy || !this.isPlayerTurn() || this.targetSelectionActive) return;
+      void this.handleFlee();
+    });
 
     let skillY = 320;
     for (const id of this.profile.equippedSkills) {
@@ -233,6 +247,14 @@ export class Battle extends Phaser.Scene {
         return { result, autoAdvance: result.ok };
       });
     }
+  }
+
+  private async handleFlee() {
+    if (this.busy || this.state.ended || !this.isPlayerTurn()) return;
+    await this.runPlayerAction(() => {
+      const result = attemptFlee(this.state, this.playerId);
+      return { result, autoAdvance: true };
+    });
   }
 
   private async runPlayerAction(
@@ -442,6 +464,9 @@ export class Battle extends Phaser.Scene {
     if (this.endTurnButton) {
       this.endTurnButton.setPosition(layout.endTurnX, layout.endTurnY);
     }
+    if (this.fleeButton) {
+      this.fleeButton.setPosition(layout.endTurnX - 120, layout.endTurnY);
+    }
     const playerStatus = this.statusLabels[this.playerId];
     if (playerStatus) {
       playerStatus.setWordWrapWidth(Math.max(220, layout.logWidth / 2));
@@ -497,6 +522,15 @@ export class Battle extends Phaser.Scene {
       } else {
         this.endTurnButton.disableInteractive();
         this.endTurnButton.setAlpha(0.6);
+      }
+    }
+    if (this.fleeButton) {
+      if (enabled) {
+        this.fleeButton.setInteractive({ useHandCursor: true });
+        this.fleeButton.setAlpha(1);
+      } else {
+        this.fleeButton.disableInteractive();
+        this.fleeButton.setAlpha(0.6);
       }
     }
   }
