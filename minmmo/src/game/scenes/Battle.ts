@@ -23,10 +23,21 @@ interface BattleInitData {
   enemyLevel: number;
 }
 
-interface TargetButton {
-  actorId: string;
-  text: Phaser.GameObjects.Text;
+interface LabelBackgroundElements {
+  container: Phaser.GameObjects.Container;
+  background: Phaser.GameObjects.Graphics;
+  label: Phaser.GameObjects.Text;
+  width: number;
+  height: number;
 }
+
+interface TargetButton extends LabelBackgroundElements {
+  actorId: string;
+  hitArea: Phaser.GameObjects.Rectangle;
+  hover: boolean;
+}
+
+type TargetPromptElements = LabelBackgroundElements;
 
 const PLAYER_ID = 'player';
 
@@ -62,11 +73,13 @@ interface LayoutMetrics {
   commandPanel: LayoutRect;
   commandTabs: LayoutRect;
   commandContent: LayoutRect;
+  commandFooter: LayoutRect;
   commandTabSpacing: number;
   commandRowHeight: number;
   commandRowSpacing: number;
   commandIconWidth: number;
   commandTextPadding: number;
+  commandFooterSpacing: number;
   logCard: LayoutRect;
   logContent: LayoutRect;
   logLabel: { x: number; y: number };
@@ -95,6 +108,14 @@ interface CommandRow {
   label: Phaser.GameObjects.Text;
   detail?: Phaser.GameObjects.Text;
   onClick?: () => void;
+}
+
+interface CommandFooterButton extends LabelBackgroundElements {
+  key: 'endTurn' | 'flee';
+  hitArea: Phaser.GameObjects.Rectangle;
+  onClick: () => void;
+  hover: boolean;
+  enabled: boolean;
 }
 
 interface ActorCardElements {
@@ -129,7 +150,8 @@ export class Battle extends Phaser.Scene {
   private commandPanelBackground?: Phaser.GameObjects.Graphics;
   private commandContentBackground?: Phaser.GameObjects.Graphics;
   private commandRows: CommandRow[] = [];
-  private targetPrompt?: Phaser.GameObjects.Text;
+  private commandFooterButtons: CommandFooterButton[] = [];
+  private targetPrompt?: TargetPromptElements;
   private targetButtons: TargetButton[] = [];
   private outcomeHandled = false;
   private layout?: LayoutMetrics;
@@ -229,6 +251,13 @@ export class Battle extends Phaser.Scene {
       const actor = this.state.actors[enemyId];
       if (!actor) continue;
       this.actorCards[enemyId] = this.createActorCard(actor);
+    }
+
+    if (!this.commandFooterButtons.length) {
+      this.commandFooterButtons = [
+        this.createFooterButton('End Turn', 'endTurn', () => void this.handleEndTurn()),
+        this.createFooterButton('Flee', 'flee', () => void this.handleFlee()),
+      ];
     }
 
   }
@@ -458,6 +487,90 @@ export class Battle extends Phaser.Scene {
     return row;
   }
 
+  private createFooterButton(
+    label: string,
+    key: CommandFooterButton['key'],
+    onClick: () => void,
+  ): CommandFooterButton {
+    const container = this.add.container(0, 0);
+    container.setDepth(5).setScrollFactor(0);
+    const background = this.add.graphics();
+    container.add(background);
+    const hitArea = this.add.rectangle(0, 0, 10, 10, 0xffffff, 0).setOrigin(0, 0);
+    hitArea.setScrollFactor(0);
+    hitArea.setInteractive({ useHandCursor: true });
+    container.add(hitArea);
+    const text = this.add.text(0, 0, label, {
+      color: '#e6e8ef',
+      fontSize: '14px',
+      fontStyle: 'bold',
+    });
+    text.setScrollFactor(0);
+    container.add(text);
+    const button: CommandFooterButton = {
+      key,
+      container,
+      background,
+      label: text,
+      hitArea,
+      onClick,
+      hover: false,
+      enabled: true,
+      width: 0,
+      height: 0,
+    };
+    hitArea.on('pointerdown', () => {
+      if (!hitArea.input?.enabled) return;
+      onClick();
+    });
+    hitArea.on('pointerover', () => {
+      if (!button.enabled) return;
+      button.hover = true;
+      this.updateFooterButtonAppearance(button);
+    });
+    hitArea.on('pointerout', () => {
+      button.hover = false;
+      this.updateFooterButtonAppearance(button);
+    });
+    return button;
+  }
+
+  private createTargetButton(actorId: string, label: string): TargetButton {
+    const container = this.add.container(0, 0);
+    container.setDepth(6).setScrollFactor(0);
+    const background = this.add.graphics();
+    container.add(background);
+    const hitArea = this.add.rectangle(0, 0, 10, 10, 0xffffff, 0).setOrigin(0, 0);
+    hitArea.setScrollFactor(0);
+    hitArea.setInteractive({ useHandCursor: true });
+    container.add(hitArea);
+    const text = this.add.text(0, 0, label, {
+      color: actorId === 'cancel' ? '#f3bac1' : '#e6e8ef',
+      fontSize: '14px',
+    });
+    text.setScrollFactor(0);
+    container.add(text);
+    const button: TargetButton = {
+      actorId,
+      container,
+      background,
+      label: text,
+      hitArea,
+      hover: false,
+      width: 0,
+      height: 0,
+    };
+    hitArea.on('pointerover', () => {
+      button.hover = true;
+      this.updateTargetButtonAppearance(button);
+    });
+    hitArea.on('pointerout', () => {
+      button.hover = false;
+      this.updateTargetButtonAppearance(button);
+    });
+    return button;
+  }
+
   private describeCost(costs: RuntimeCost): string {
     const parts: string[] = [];
     if (costs.mp > 0) parts.push(`MP ${costs.mp}`);
@@ -498,6 +611,7 @@ export class Battle extends Phaser.Scene {
     }
 
     const contentRect = layout.commandContent;
+    const footerRect = layout.commandFooter;
     const hasContent = contentRect.width > 0 && contentRect.height > 0;
     this.commandContentBackground.setVisible(hasContent);
     this.commandContentBackground.clear();
@@ -617,6 +731,163 @@ export class Battle extends Phaser.Scene {
         row.container.setVisible(false);
       }
     }
+
+    this.layoutFooterButtons(layout, hasPanel && (footerRect.width > 0 && footerRect.height > 0));
+  }
+
+  private layoutFooterButtons(layout: LayoutMetrics, visible: boolean) {
+    if (!this.commandFooterButtons.length) {
+      return;
+    }
+    const footerRect = layout.commandFooter;
+    const buttons = this.commandFooterButtons;
+    if (!visible) {
+      for (const button of buttons) {
+        button.container.setVisible(false);
+      }
+      return;
+    }
+    const buttonCount = buttons.length;
+    if (buttonCount === 0) {
+      return;
+    }
+    const spacing = buttonCount > 1 ? Math.max(12, Math.min(24, Math.round(footerRect.width * 0.06))) : 0;
+    const widthAvailable = Math.max(0, footerRect.width - spacing * (buttonCount - 1));
+    const rawWidth = buttonCount > 0 ? widthAvailable / buttonCount : widthAvailable;
+    const buttonWidth = Math.max(0, rawWidth);
+    const desiredHeight = Math.max(36, Math.round(footerRect.height * 0.7));
+    const buttonHeight = Math.max(36, Math.min(footerRect.height, desiredHeight));
+    let x = footerRect.x;
+    const y = footerRect.y + Math.max(0, (footerRect.height - buttonHeight) / 2);
+    for (const button of buttons) {
+      button.container.setVisible(true);
+      button.container.setPosition(x, y);
+      button.container.setDepth(5);
+      button.width = buttonWidth;
+      button.height = buttonHeight;
+      button.container.setSize(buttonWidth, buttonHeight);
+      button.hitArea.setPosition(0, 0);
+      button.hitArea.setSize(buttonWidth, buttonHeight);
+      button.hitArea.setDisplaySize(buttonWidth, buttonHeight);
+      button.label.setPosition(buttonWidth / 2 - button.label.width / 2, buttonHeight / 2 - button.label.height / 2);
+      this.updateFooterButtonAppearance(button);
+      x += buttonWidth + spacing;
+    }
+  }
+
+  private layoutTargetPicker(layout: LayoutMetrics) {
+    if (!this.targetPrompt) {
+      return;
+    }
+    const prompt = this.targetPrompt;
+    const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
+    const rightCandidates = [
+      layout.footer.x + layout.footer.width,
+      layout.sidebar.x + layout.sidebar.width,
+      layout.stage.x + layout.stage.width,
+      layout.logCard.x + layout.logCard.width,
+    ];
+    const rightEdge = rightCandidates.reduce((max, value) => (value > max ? value : max), layout.targetX + 240);
+    const paddingX = 16;
+    const paddingY = 10;
+    const baseWidth = Math.max(prompt.label.width + paddingX * 2, 180);
+    const availableWidth = rightEdge - layout.targetX - 16;
+    const promptWidth = Math.max(180, Math.min(320, Math.max(baseWidth, availableWidth)));
+    const promptHeight = Math.max(40, prompt.label.height + paddingY * 2);
+    prompt.width = promptWidth;
+    prompt.height = promptHeight;
+    prompt.container.setPosition(layout.targetX, baseY);
+    prompt.container.setSize(promptWidth, promptHeight);
+    prompt.label.setPosition(paddingX, Math.max(paddingY, promptHeight / 2 - prompt.label.height / 2));
+    this.drawButtonBackground(prompt.background, promptWidth, promptHeight, {
+      fillColor: 0x1b2140,
+      fillAlpha: 0.9,
+      strokeColor: 0x2a3154,
+      strokeAlpha: 0.7,
+    });
+
+    let y = baseY + promptHeight + 16;
+    const buttonPaddingX = 16;
+    const buttonPaddingY = 10;
+    const buttonSpacing = 12;
+    for (const button of this.targetButtons) {
+      const labelMaxWidth = Math.max(0, promptWidth - buttonPaddingX * 2);
+      button.width = promptWidth;
+      button.height = Math.max(40, button.label.height + buttonPaddingY * 2);
+      button.container.setVisible(true);
+      button.container.setPosition(layout.targetX, y);
+      button.container.setSize(button.width, button.height);
+      button.hitArea.setPosition(0, 0);
+      button.hitArea.setSize(button.width, button.height);
+      button.hitArea.setDisplaySize(button.width, button.height);
+      button.label.setWordWrapWidth(labelMaxWidth);
+      button.label.setMaxWidth(labelMaxWidth);
+      button.label.setPosition(
+        buttonPaddingX,
+        Math.max(buttonPaddingY, button.height / 2 - button.label.height / 2),
+      );
+      this.updateTargetButtonAppearance(button);
+      y += button.height + buttonSpacing;
+    }
+  }
+
+  private drawButtonBackground(
+    background: Phaser.GameObjects.Graphics,
+    width: number,
+    height: number,
+    options: { fillColor: number; fillAlpha: number; strokeColor: number; strokeAlpha: number; radius?: number; strokeWidth?: number },
+  ) {
+    background.clear();
+    const w = Math.max(0, Math.floor(width));
+    const h = Math.max(0, Math.floor(height));
+    if (w <= 0 || h <= 0) {
+      return;
+    }
+    const radius = options.radius ?? 12;
+    const strokeWidth = options.strokeWidth ?? 1.5;
+    background.fillStyle(options.fillColor, options.fillAlpha);
+    background.fillRoundedRect(0, 0, w, h, radius);
+    background.lineStyle(strokeWidth, options.strokeColor, options.strokeAlpha);
+    background.strokeRoundedRect(0, 0, w, h, radius);
+  }
+
+  private updateTargetButtonAppearance(button: TargetButton) {
+    const isCancel = button.actorId === 'cancel';
+    const fillAlpha = button.hover ? (isCancel ? 0.95 : 1) : isCancel ? 0.85 : 0.92;
+    const strokeAlpha = button.hover ? 0.9 : 0.7;
+    const textColor = isCancel
+      ? button.hover
+        ? '#ffd6db'
+        : '#f3bac1'
+      : button.hover
+        ? '#f4f6ff'
+        : '#e6e8ef';
+    button.label.setColor(textColor);
+    this.drawButtonBackground(button.background, button.width, button.height, {
+      fillColor: 0x1b2140,
+      fillAlpha,
+      strokeColor: 0x2a3154,
+      strokeAlpha,
+    });
+  }
+
+  private updateFooterButtonAppearance(button: CommandFooterButton) {
+    const baseFillAlpha = button.enabled ? 0.92 : 0.55;
+    const hoverFillAlpha = button.enabled ? 1 : baseFillAlpha;
+    const fillAlpha = button.hover ? hoverFillAlpha : baseFillAlpha;
+    const strokeAlpha = button.enabled ? (button.hover ? 0.95 : 0.7) : 0.4;
+    const textColor = button.enabled
+      ? button.hover
+        ? '#f4f6ff'
+        : '#e6e8ef'
+      : '#8b8fa3';
+    button.label.setColor(textColor);
+    this.drawButtonBackground(button.background, button.width, button.height, {
+      fillColor: 0x1b2140,
+      fillAlpha,
+      strokeColor: 0x2a3154,
+      strokeAlpha,
+    });
   }
 
   private async handleSkill(skill: RuntimeSkill) {
@@ -818,39 +1089,50 @@ export class Battle extends Phaser.Scene {
     }
     this.targetSelectionActive = true;
     this.refreshCommandAvailability();
-    const layout = this.layout ?? this.computeLayout();
-    const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
-    this.targetPrompt = this.add.text(layout.targetX, baseY, 'Choose target:', { color: '#e6e8ef' });
-    let y = baseY + 30;
+    const promptContainer = this.add.container(0, 0);
+    promptContainer.setDepth(6).setScrollFactor(0);
+    const promptBackground = this.add.graphics();
+    promptContainer.add(promptBackground);
+    const promptLabel = this.add.text(0, 0, 'Choose target:', {
+      color: '#f4f6ff',
+      fontSize: '14px',
+      fontStyle: 'bold',
+    });
+    promptLabel.setScrollFactor(0);
+    promptContainer.add(promptLabel);
+    this.targetPrompt = {
+      container: promptContainer,
+      background: promptBackground,
+      label: promptLabel,
+      width: 0,
+      height: 0,
+    };
     for (const id of candidates) {
       const actor = this.state.actors[id];
       if (!actor) continue;
-      const text = this.add
-        .text(layout.targetX, y, `${actor.name} (${Math.max(0, actor.stats.hp)}/${actor.stats.maxHp})`, {
-          color: '#7c5cff',
-        })
-        .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => {
+      const button = this.createTargetButton(
+        id,
+        `${actor.name} (${Math.max(0, actor.stats.hp)}/${actor.stats.maxHp})`,
+      );
+      button.hitArea.on('pointerdown', () => {
         onPick(id);
       });
-      this.targetButtons.push({ actorId: id, text });
-      y += 22;
+      this.targetButtons.push(button);
     }
-    const cancel = this.add
-      .text(layout.targetX, y + 10, '[Cancel]', { color: '#8b8fa3' })
-      .setInteractive({ useHandCursor: true });
-    cancel.on('pointerdown', () => {
+    const cancelButton = this.createTargetButton('cancel', 'Cancel');
+    cancelButton.hitArea.on('pointerdown', () => {
       this.clearTargetPicker();
     });
-    this.targetButtons.push({ actorId: 'cancel', text: cancel });
+    this.targetButtons.push(cancelButton);
+    this.layoutUi();
   }
 
   private clearTargetPicker() {
     if (this.targetPrompt) {
-      this.targetPrompt.destroy();
+      this.targetPrompt.container.destroy(true);
       this.targetPrompt = undefined;
     }
-    for (const entry of this.targetButtons) entry.text.destroy();
+    for (const entry of this.targetButtons) entry.container.destroy(true);
     this.targetButtons = [];
     this.targetSelectionActive = false;
     this.refreshCommandAvailability();
@@ -1024,11 +1306,38 @@ export class Battle extends Phaser.Scene {
     const commandTabSpacing = Math.max(10, Math.min(18, Math.round(commandPanel.width * 0.05)));
     const contentGap = Math.max(12, Math.round(commandPanel.height * 0.06));
     const commandContentTop = commandTabs.y + commandTabs.height + contentGap;
+    const commandBottom = commandPanel.y + commandPanel.height;
+    const maxFooterSpace = Math.max(0, commandBottom - commandContentTop);
+    let commandFooterSpacing = Math.max(10, Math.round(commandPanel.height * 0.05));
+    let commandFooterHeight = Math.max(44, Math.min(64, Math.round(commandPanel.height * 0.24)));
+    if (commandFooterHeight > maxFooterSpace) {
+      commandFooterHeight = maxFooterSpace;
+    }
+    if (commandFooterHeight + commandFooterSpacing > maxFooterSpace) {
+      commandFooterSpacing = Math.max(0, maxFooterSpace - commandFooterHeight);
+    }
+    let footerY = commandBottom - commandFooterHeight;
+    if (footerY < commandContentTop) {
+      footerY = commandContentTop;
+      commandFooterHeight = Math.max(0, commandBottom - footerY);
+      commandFooterSpacing = 0;
+    }
+    let commandContentHeight = Math.max(0, footerY - commandContentTop - commandFooterSpacing);
+    if (commandContentHeight <= 0) {
+      commandFooterSpacing = 0;
+      commandContentHeight = Math.max(0, footerY - commandContentTop);
+    }
     const commandContent: LayoutRect = {
       x: commandPanel.x,
       y: commandContentTop,
       width: commandPanel.width,
-      height: Math.max(0, commandPanel.y + commandPanel.height - commandContentTop),
+      height: Math.max(0, commandContentHeight),
+    };
+    const commandFooter: LayoutRect = {
+      x: commandPanel.x,
+      y: footerY,
+      width: commandPanel.width,
+      height: Math.max(0, commandBottom - footerY),
     };
     const commandRowHeight = Math.max(42, Math.min(60, Math.round(Math.max(44, commandPanel.height * 0.28))));
     const commandRowSpacing = Math.max(8, Math.round(commandRowHeight * 0.25));
@@ -1092,11 +1401,13 @@ export class Battle extends Phaser.Scene {
       commandPanel,
       commandTabs,
       commandContent,
+      commandFooter,
       commandTabSpacing,
       commandRowHeight,
       commandRowSpacing,
       commandIconWidth,
       commandTextPadding,
+      commandFooterSpacing,
       logCard: logCardRect,
       logContent: logContentRect,
       logLabel: logLabelPosition,
@@ -1225,19 +1536,7 @@ export class Battle extends Phaser.Scene {
       this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
     }
     this.layoutCommandPanel(layout);
-    if (this.targetPrompt) {
-      const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
-      this.targetPrompt.setPosition(layout.targetX, baseY);
-      let y = baseY + 30;
-      for (const entry of this.targetButtons) {
-        if (entry.actorId === 'cancel') {
-          entry.text.setPosition(layout.targetX, y + 10);
-        } else {
-          entry.text.setPosition(layout.targetX, y);
-          y += 22;
-        }
-      }
-    }
+    this.layoutTargetPicker(layout);
   }
 
   private isPlayerTurn(): boolean {
@@ -1275,6 +1574,21 @@ export class Battle extends Phaser.Scene {
           row.container.setAlpha(0.5);
         }
       }
+    }
+    for (const button of this.commandFooterButtons) {
+      const interactive = canUseCommands;
+      button.enabled = interactive;
+      if (interactive) {
+        if (!button.hitArea.input?.enabled) {
+          button.hitArea.setInteractive({ useHandCursor: true });
+        }
+      } else {
+        button.hitArea.disableInteractive();
+        if (!interactive) {
+          button.hover = false;
+        }
+      }
+      this.updateFooterButtonAppearance(button);
     }
   }
 
