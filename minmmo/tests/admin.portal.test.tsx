@@ -62,4 +62,74 @@ describe('AdminPortal', () => {
     const saveButton = screen.getByRole('button', { name: /^save$/i }) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(true);
   });
+
+  it('allows editing classes and persists related data', async () => {
+    const user = userEvent.setup();
+    render(<AdminPortal />);
+
+    await user.click(screen.getByRole('button', { name: /classes/i }));
+    await user.click(screen.getByRole('button', { name: /add class/i }));
+
+    const [classButton] = await screen.findAllByRole('button', { name: /new-class/i });
+    await user.click(classButton);
+
+    const classIdInput = await screen.findByLabelText('Class ID');
+    await user.clear(classIdInput);
+    await user.type(classIdInput, 'warrior');
+
+    const maxHpInput = screen.getByLabelText('Max HP');
+    await user.clear(maxHpInput);
+    await user.type(maxHpInput, '40');
+
+    await user.click(screen.getByRole('button', { name: /add skill/i }));
+    const classSkillInput = await screen.findByLabelText('Class Skill 1');
+    await user.type(classSkillInput, 'slash');
+
+    await user.click(screen.getByRole('button', { name: /add item/i }));
+    const startItemId = screen.getByLabelText('Start Item 1 ID');
+    await user.type(startItemId, 'potion');
+    const startItemQty = screen.getByLabelText('Start Item 1 Quantity');
+    await user.clear(startItemQty);
+    await user.type(startItemQty, '2');
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    const cfg = load();
+    expect(cfg.classes.warrior).toBeDefined();
+    expect(cfg.classes.warrior.maxHp).toBe(40);
+    expect(cfg.classSkills.warrior).toEqual(['slash']);
+    expect(cfg.startItems.warrior).toEqual([{ id: 'potion', qty: 2 }]);
+  });
+
+  it('edits statuses with tags and saves them', async () => {
+    const user = userEvent.setup();
+    render(<AdminPortal />);
+
+    await user.click(screen.getByRole('button', { name: /statuses/i }));
+    await user.click(screen.getByRole('button', { name: /add status/i }));
+
+    const statusIdInput = await screen.findByLabelText('Status ID');
+    await user.clear(statusIdInput);
+    await user.type(statusIdInput, 'burning');
+
+    const statusNameInput = screen.getByLabelText('Status Name');
+    await user.clear(statusNameInput);
+    await user.type(statusNameInput, 'Burning');
+
+    const maxStacksInput = screen.getByLabelText('Max Stacks');
+    await user.clear(maxStacksInput);
+    await user.type(maxStacksInput, '3');
+
+    await user.click(screen.getByRole('button', { name: /add tag/i }));
+    const tagInput = screen.getByLabelText('Status Tag 1');
+    await user.type(tagInput, 'fire');
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    const cfg = load();
+    expect(cfg.statuses.burning).toBeDefined();
+    expect(cfg.statuses.burning.name).toBe('Burning');
+    expect(cfg.statuses.burning.maxStacks).toBe(3);
+    expect(cfg.statuses.burning.tags).toEqual(['fire']);
+  });
 });
