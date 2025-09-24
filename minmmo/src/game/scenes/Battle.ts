@@ -558,9 +558,9 @@ export class Battle extends Phaser.Scene {
       this.targetPickCallback
     ) {
       if (!card.hitArea.input?.enabled) {
-        card.hitArea.setInteractive({ useHandCursor: true });
+        card.hitArea.setInteractive({ cursor: 'pointer' });
       } else if (card.hitArea.input) {
-        card.hitArea.input.useHandCursor = true;
+        card.hitArea.input.cursor = 'pointer';
       }
     } else if (card.hitArea.input?.enabled) {
       card.hitArea.disableInteractive();
