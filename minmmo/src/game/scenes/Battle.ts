@@ -37,8 +37,6 @@ interface TargetButton extends LabelBackgroundElements {
   hover: boolean;
 }
 
-type TargetPromptElements = LabelBackgroundElements;
-
 const PLAYER_ID = 'player';
 
 interface CardLayoutMetrics {
@@ -118,14 +116,25 @@ interface CommandFooterButton extends LabelBackgroundElements {
   enabled: boolean;
 }
 
+type ActorCardState = 'idle' | 'active' | 'targetable' | 'disabled';
+
 interface ActorCardElements {
+  actorId: string;
   container: Phaser.GameObjects.Container;
   background: Phaser.GameObjects.Graphics;
+  highlight: Phaser.GameObjects.Graphics;
   portrait: Phaser.GameObjects.Ellipse;
   nameText: Phaser.GameObjects.Text;
   classText: Phaser.GameObjects.Text;
   levelText: Phaser.GameObjects.Text;
   statusText: Phaser.GameObjects.Text;
+  overlay: Phaser.GameObjects.Graphics;
+  hitArea: Phaser.GameObjects.Rectangle;
+  state: ActorCardState;
+  hover: boolean;
+  width: number;
+  height: number;
+  cornerRadius: number;
   barArea: { x: number; y: number; width: number; height: number; spacing: number };
 }
 
@@ -151,8 +160,9 @@ export class Battle extends Phaser.Scene {
   private commandContentBackground?: Phaser.GameObjects.Graphics;
   private commandRows: CommandRow[] = [];
   private commandFooterButtons: CommandFooterButton[] = [];
-  private targetPrompt?: TargetPromptElements;
   private targetButtons: TargetButton[] = [];
+  private targetCandidates: Set<string> = new Set();
+  private targetPickCallback?: (targetId: string) => void;
   private outcomeHandled = false;
   private layout?: LayoutMetrics;
   private busy = false;
@@ -296,35 +306,71 @@ export class Battle extends Phaser.Scene {
     container.add(levelText);
     container.add(statusText);
 
-    return {
+    const overlay = this.add.graphics();
+    container.add(overlay);
+
+    const highlight = this.add.graphics();
+    container.add(highlight);
+
+    const hitArea = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0).setOrigin(0, 0);
+    hitArea.setScrollFactor(0);
+    container.add(hitArea);
+
+    const card: ActorCardElements = {
+      actorId: actor.id,
       container,
       background,
+      highlight,
       portrait,
       nameText,
       classText,
       levelText,
       statusText,
+      overlay,
+      hitArea,
+      state: 'idle',
+      hover: false,
+      width: 0,
+      height: 0,
+      cornerRadius: 18,
       barArea: { x: 0, y: 0, width: 0, height: 0, spacing: 0 },
     };
+
+    hitArea.disableInteractive();
+    hitArea.on('pointerover', () => {
+      card.hover = true;
+      this.applyActorCardState(card, card.state);
+    });
+    hitArea.on('pointerout', () => {
+      card.hover = false;
+      this.applyActorCardState(card, card.state);
+    });
+    hitArea.on('pointerdown', () => {
+      if (!this.targetSelectionActive) return;
+      if (!this.targetPickCallback) return;
+      if (!this.targetCandidates.has(card.actorId)) return;
+      this.targetPickCallback(card.actorId);
+    });
+
+    return card;
   }
 
   private layoutActorCard(card: ActorCardElements, rect: LayoutRect, metrics: CardLayoutMetrics) {
     card.container.setPosition(rect.x, rect.y);
     card.container.setSize(rect.width, rect.height);
-
+    card.width = rect.width;
+    card.height = rect.height;
     const radius = 18;
-    card.background.clear();
-    card.background.fillGradientStyle(0x1a1f3c, 0x1a1f3c, 0x13172c, 0x151a33, 0.95);
-    card.background.fillRoundedRect(0, 0, rect.width, rect.height, radius);
-    card.background.lineStyle(2, 0x262d4f, 0.75);
-    card.background.strokeRoundedRect(0, 0, rect.width, rect.height, radius);
-    card.background.fillStyle(0xffffff, 0.04);
-    card.background.fillRoundedRect(2, 2, rect.width - 4, Math.max(10, rect.height * 0.28), {
-      tl: radius - 2,
-      tr: radius - 2,
-      bl: Math.max(6, radius - 12),
-      br: Math.max(6, radius - 12),
-    });
+    card.cornerRadius = radius;
+
+    card.background.setPosition(0, 0);
+    card.overlay.setPosition(0, 0);
+    card.highlight.setPosition(0, 0);
+    card.overlay.clear();
+    card.highlight.clear();
+    card.hitArea.setPosition(0, 0);
+    card.hitArea.setSize(rect.width, rect.height);
+    card.hitArea.setDisplaySize(rect.width, rect.height);
 
     card.portrait.setPosition(metrics.portraitX, metrics.portraitY);
     card.portrait.setDisplaySize(metrics.portraitDiameter, metrics.portraitDiameter);
@@ -347,6 +393,181 @@ export class Battle extends Phaser.Scene {
       height: metrics.barHeight,
       spacing: metrics.barSpacing,
     };
+  }
+
+  private applyActorCardState(card: ActorCardElements, state: ActorCardState) {
+    if (card.state !== state) {
+      if (state !== 'targetable' && card.hover) {
+        card.hover = false;
+      }
+      card.state = state;
+    }
+
+    const hovered = state === 'targetable' && card.hover;
+    const width = Math.max(0, card.width);
+    const height = Math.max(0, card.height);
+    const radius = card.cornerRadius;
+    const topHeight = Math.max(10, height * 0.28);
+    const topRadius = {
+      tl: Math.max(0, radius - 2),
+      tr: Math.max(0, radius - 2),
+      bl: Math.max(6, radius - 12),
+      br: Math.max(6, radius - 12),
+    } as const;
+
+    const palette = {
+      fillTL: 0x1a1f3c,
+      fillTR: 0x1a1f3c,
+      fillBL: 0x13172c,
+      fillBR: 0x151a33,
+      fillAlpha: 0.95,
+      strokeColor: 0x262d4f,
+      strokeAlpha: 0.75,
+      topFill: 0xffffff,
+      topAlpha: 0.04,
+    };
+
+    let overlayColor = 0x000000;
+    let overlayAlpha = 0;
+    let highlightColor = 0;
+    let highlightAlpha = 0;
+    let portraitFill = 0x1d223d;
+    let portraitFillAlpha = 0.9;
+    let portraitStroke = 0x2f3659;
+    let portraitStrokeAlpha = 0.9;
+    let nameColor = '#f4f6ff';
+    let classColor = '#a99efc';
+    let levelColor = '#8b8fa3';
+    let statusColor = '#9da3c3';
+
+    switch (state) {
+      case 'active':
+        palette.fillTL = 0x242a52;
+        palette.fillTR = 0x242a52;
+        palette.fillBL = 0x1a2142;
+        palette.fillBR = 0x1d2548;
+        palette.fillAlpha = 0.98;
+        palette.strokeColor = 0xf6d465;
+        palette.strokeAlpha = 0.95;
+        palette.topFill = 0xf6d465;
+        palette.topAlpha = 0.12;
+        highlightColor = 0xf6d465;
+        highlightAlpha = 0.95;
+        portraitFill = 0x23294d;
+        portraitFillAlpha = 0.95;
+        portraitStroke = 0xf6d465;
+        portraitStrokeAlpha = 0.95;
+        nameColor = '#ffe7a1';
+        classColor = '#cbbcff';
+        levelColor = '#b3a7ff';
+        statusColor = '#d6c9ff';
+        break;
+      case 'targetable':
+        palette.fillTL = 0x1c3029;
+        palette.fillTR = 0x1d332c;
+        palette.fillBL = 0x12231f;
+        palette.fillBR = 0x152923;
+        palette.strokeColor = 0x38d499;
+        palette.strokeAlpha = 0.85;
+        palette.topFill = 0x38d499;
+        palette.topAlpha = 0.1;
+        highlightColor = 0x42e3a7;
+        highlightAlpha = hovered ? 1 : 0.88;
+        overlayColor = 0x2cd98d;
+        overlayAlpha = hovered ? 0.24 : 0.16;
+        portraitFill = 0x1a2f25;
+        portraitFillAlpha = 0.92;
+        portraitStroke = 0x45dfa6;
+        portraitStrokeAlpha = hovered ? 0.98 : 0.9;
+        nameColor = '#d6ffe8';
+        classColor = '#99e3c0';
+        levelColor = '#87c7a5';
+        statusColor = '#9fd4b6';
+        break;
+      case 'disabled':
+        palette.fillTL = 0x151a2e;
+        palette.fillTR = 0x151a2e;
+        palette.fillBL = 0x101427;
+        palette.fillBR = 0x11162a;
+        palette.fillAlpha = 0.92;
+        palette.strokeColor = 0x1e243f;
+        palette.strokeAlpha = 0.55;
+        palette.topFill = 0xffffff;
+        palette.topAlpha = 0.02;
+        overlayColor = 0x04050d;
+        overlayAlpha = 0.55;
+        portraitFill = 0x161a2d;
+        portraitFillAlpha = 0.85;
+        portraitStroke = 0x242a44;
+        portraitStrokeAlpha = 0.55;
+        nameColor = '#9ba0b9';
+        classColor = '#7c8099';
+        levelColor = '#7c8099';
+        statusColor = '#7e8398';
+        break;
+      case 'idle':
+      default:
+        highlightAlpha = 0;
+        overlayAlpha = 0;
+        break;
+    }
+
+    card.background.clear();
+    if (width > 0 && height > 0) {
+      card.background.fillGradientStyle(
+        palette.fillTL,
+        palette.fillTR,
+        palette.fillBL,
+        palette.fillBR,
+        palette.fillAlpha,
+      );
+      card.background.fillRoundedRect(0, 0, width, height, radius);
+      card.background.lineStyle(2, palette.strokeColor, palette.strokeAlpha);
+      card.background.strokeRoundedRect(0, 0, width, height, radius);
+      card.background.fillStyle(palette.topFill, palette.topAlpha);
+      card.background.fillRoundedRect(2, 2, Math.max(0, width - 4), topHeight, topRadius);
+    }
+
+    card.portrait.setFillStyle(portraitFill, portraitFillAlpha);
+    card.portrait.setStrokeStyle(2, portraitStroke, portraitStrokeAlpha);
+
+    card.nameText.setColor(nameColor);
+    card.classText.setColor(classColor);
+    card.levelText.setColor(levelColor);
+    card.statusText.setColor(statusColor);
+
+    card.overlay.clear();
+    if (overlayAlpha > 0 && width > 0 && height > 0) {
+      card.overlay.fillStyle(overlayColor, overlayAlpha);
+      card.overlay.fillRoundedRect(0, 0, width, height, radius);
+    }
+
+    card.highlight.clear();
+    if (highlightAlpha > 0 && width > 0 && height > 0) {
+      const outerRadius = Math.max(0, radius + 2);
+      card.highlight.lineStyle(4, highlightColor, highlightAlpha);
+      card.highlight.strokeRoundedRect(-2, -2, width + 4, height + 4, outerRadius);
+      card.highlight.lineStyle(1.5, highlightColor, Math.min(1, highlightAlpha * 0.8));
+      card.highlight.strokeRoundedRect(1, 1, Math.max(0, width - 2), Math.max(0, height - 2), Math.max(0, radius - 2));
+    }
+
+    if (
+      state === 'targetable' &&
+      this.targetSelectionActive &&
+      this.targetCandidates.has(card.actorId) &&
+      this.targetPickCallback
+    ) {
+      if (!card.hitArea.input?.enabled) {
+        card.hitArea.setInteractive({ cursor: 'pointer' });
+      } else if (card.hitArea.input) {
+        card.hitArea.input.cursor = 'pointer';
+      }
+    } else if (card.hitArea.input?.enabled) {
+      card.hitArea.disableInteractive();
+      if (card.hover) {
+        card.hover = false;
+      }
+    }
   }
 
   private applyTextMaxWidth(text: Phaser.GameObjects.Text, width: number) {
@@ -787,57 +1008,55 @@ export class Battle extends Phaser.Scene {
   }
 
   private layoutTargetPicker(layout: LayoutMetrics) {
-    if (!this.targetPrompt) {
+    if (!this.targetButtons.length) {
       return;
     }
-    const prompt = this.targetPrompt;
-    const baseY = layout.sidebar.height > 0 ? layout.sidebar.y + 16 : layout.stage.y + 16;
-    const rightCandidates = [
-      layout.footer.x + layout.footer.width,
-      layout.sidebar.x + layout.sidebar.width,
-      layout.stage.x + layout.stage.width,
-      layout.logCard.x + layout.logCard.width,
-    ];
-    const rightEdge = rightCandidates.reduce((max, value) => (value > max ? value : max), layout.targetX + 240);
-    const paddingX = 16;
-    const paddingY = 10;
-    const baseWidth = Math.max(prompt.label.width + paddingX * 2, 180);
-    const availableWidth = rightEdge - layout.targetX - 16;
-    const promptWidth = Math.max(180, Math.min(320, Math.max(baseWidth, availableWidth)));
-    const promptHeight = Math.max(40, prompt.label.height + paddingY * 2);
-    prompt.width = promptWidth;
-    prompt.height = promptHeight;
-    prompt.container.setPosition(layout.targetX, baseY);
-    prompt.container.setSize(promptWidth, promptHeight);
-    prompt.label.setPosition(paddingX, Math.max(paddingY, promptHeight / 2 - prompt.label.height / 2));
-    this.drawButtonBackground(prompt.background, promptWidth, promptHeight, {
-      fillColor: 0x1b2140,
-      fillAlpha: 0.9,
-      strokeColor: 0x2a3154,
-      strokeAlpha: 0.7,
-    });
+    const cancelButton = this.targetButtons.find((button) => button.actorId === 'cancel');
+    if (!cancelButton) {
+      for (const button of this.targetButtons) {
+        button.container.setVisible(false);
+      }
+      return;
+    }
 
-    let y = baseY + promptHeight + 16;
-    const buttonPaddingX = 16;
-    const buttonPaddingY = 10;
-    const buttonSpacing = 12;
+    const active = this.targetSelectionActive;
+    cancelButton.container.setVisible(active);
+    if (!active) {
+      return;
+    }
+
+    const stageLeft = layout.stage.x;
+    const stageRight =
+      layout.sidebar.width > 0 ? layout.sidebar.x + layout.sidebar.width : layout.stage.x + layout.stage.width;
+    const availableWidth = Math.max(0, stageRight - stageLeft);
+    const buttonWidth = Math.max(160, Math.min(280, availableWidth > 0 ? Math.round(availableWidth * 0.35) : 220));
+    const buttonHeight = Math.max(44, Math.min(60, Math.round(buttonWidth * 0.28)));
+    const centerX = stageLeft + Math.max(0, (availableWidth - buttonWidth) / 2);
+    const stageHeight = Math.max(0, layout.stage.height);
+    const centerY = layout.stage.y + Math.max(0, stageHeight / 2 - buttonHeight / 2);
+
+    cancelButton.width = buttonWidth;
+    cancelButton.height = buttonHeight;
+    cancelButton.container.setPosition(centerX, centerY);
+    cancelButton.container.setSize(buttonWidth, buttonHeight);
+    cancelButton.container.setDepth(6);
+    cancelButton.hitArea.setPosition(0, 0);
+    cancelButton.hitArea.setSize(buttonWidth, buttonHeight);
+    cancelButton.hitArea.setDisplaySize(buttonWidth, buttonHeight);
+
+    const labelPadding = 18;
+    const labelMaxWidth = Math.max(0, buttonWidth - labelPadding * 2);
+    this.applyTextMaxWidth(cancelButton.label, labelMaxWidth);
+    cancelButton.label.setPosition(
+      buttonWidth / 2 - cancelButton.label.width / 2,
+      buttonHeight / 2 - cancelButton.label.height / 2,
+    );
+    this.updateTargetButtonAppearance(cancelButton);
+
     for (const button of this.targetButtons) {
-      const labelMaxWidth = Math.max(0, promptWidth - buttonPaddingX * 2);
-      button.width = promptWidth;
-      button.height = Math.max(40, button.label.height + buttonPaddingY * 2);
-      button.container.setVisible(true);
-      button.container.setPosition(layout.targetX, y);
-      button.container.setSize(button.width, button.height);
-      button.hitArea.setPosition(0, 0);
-      button.hitArea.setSize(button.width, button.height);
-      button.hitArea.setDisplaySize(button.width, button.height);
-      this.applyTextMaxWidth(button.label, labelMaxWidth);
-      button.label.setPosition(
-        buttonPaddingX,
-        Math.max(buttonPaddingY, button.height / 2 - button.label.height / 2),
-      );
-      this.updateTargetButtonAppearance(button);
-      y += button.height + buttonSpacing;
+      if (button.actorId !== 'cancel') {
+        button.container.setVisible(false);
+      }
     }
   }
 
@@ -1098,54 +1317,33 @@ export class Battle extends Phaser.Scene {
       return;
     }
     this.targetSelectionActive = true;
-    this.refreshCommandAvailability();
-    const promptContainer = this.add.container(0, 0);
-    promptContainer.setDepth(6).setScrollFactor(0);
-    const promptBackground = this.add.graphics();
-    promptContainer.add(promptBackground);
-    const promptLabel = this.add.text(0, 0, 'Choose target:', {
-      color: '#f4f6ff',
-      fontSize: '14px',
-      fontStyle: 'bold',
-    });
-    promptLabel.setScrollFactor(0);
-    promptContainer.add(promptLabel);
-    this.targetPrompt = {
-      container: promptContainer,
-      background: promptBackground,
-      label: promptLabel,
-      width: 0,
-      height: 0,
-    };
+    this.targetCandidates.clear();
     for (const id of candidates) {
-      const actor = this.state.actors[id];
-      if (!actor) continue;
-      const button = this.createTargetButton(
-        id,
-        `${actor.name} (${Math.max(0, actor.stats.hp)}/${actor.stats.maxHp})`,
-      );
-      button.hitArea.on('pointerdown', () => {
-        onPick(id);
-      });
-      this.targetButtons.push(button);
+      this.targetCandidates.add(id);
     }
+    this.targetPickCallback = onPick;
     const cancelButton = this.createTargetButton('cancel', 'Cancel');
     cancelButton.hitArea.on('pointerdown', () => {
       this.clearTargetPicker();
     });
     this.targetButtons.push(cancelButton);
+    this.refreshCommandAvailability();
+    this.renderState();
     this.layoutUi();
   }
 
   private clearTargetPicker() {
-    if (this.targetPrompt) {
-      this.targetPrompt.container.destroy(true);
-      this.targetPrompt = undefined;
-    }
+    const wasActive = this.targetSelectionActive || this.targetButtons.length > 0 || this.targetCandidates.size > 0;
     for (const entry of this.targetButtons) entry.container.destroy(true);
     this.targetButtons = [];
     this.targetSelectionActive = false;
+    this.targetCandidates.clear();
+    this.targetPickCallback = undefined;
     this.refreshCommandAvailability();
+    if (wasActive) {
+      this.renderState();
+      this.layoutUi();
+    }
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
@@ -1830,7 +2028,31 @@ export class Battle extends Phaser.Scene {
       : 'None';
     card.statusText.setText(`Status: ${statuses}`);
 
+    const cardState = this.getCardStateForActor(actor);
+    this.applyActorCardState(card, cardState);
+
     this.drawBars(card, actor.stats);
+  }
+
+  private getCardStateForActor(actor: Actor): ActorCardState {
+    const currentId = this.state.order[this.state.current];
+    const isCurrent = currentId === actor.id;
+    if (isCurrent && actor.alive) {
+      return 'active';
+    }
+
+    if (this.targetSelectionActive) {
+      if (this.targetCandidates.has(actor.id)) {
+        return 'targetable';
+      }
+      return 'disabled';
+    }
+
+    if (!actor.alive || this.state.ended) {
+      return 'disabled';
+    }
+
+    return 'idle';
   }
 
   private drawBars(card: ActorCardElements, stats: Actor['stats']) {
