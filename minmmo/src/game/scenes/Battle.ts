@@ -175,7 +175,41 @@ export class Battle extends Phaser.Scene {
     super('Battle');
   }
 
+  private resetUiState() {
+    for (const button of this.commandTabButtons) {
+      button.container.destroy(true);
+    }
+    this.commandTabButtons = [];
+
+    for (const row of this.commandRows) {
+      row.container.destroy(true);
+    }
+    this.commandRows = [];
+
+    for (const button of this.commandFooterButtons) {
+      button.container.destroy(true);
+    }
+    this.commandFooterButtons = [];
+
+    for (const button of this.targetButtons) {
+      button.container.destroy(true);
+    }
+    this.targetButtons = [];
+    this.targetCandidates.clear();
+
+    if (this.commandPanelBackground) {
+      this.commandPanelBackground.destroy();
+      this.commandPanelBackground = undefined;
+    }
+
+    if (this.commandContentBackground) {
+      this.commandContentBackground.destroy();
+      this.commandContentBackground = undefined;
+    }
+  }
+
   create(data: BattleInitData) {
+    this.resetUiState();
     this.outcomeHandled = false;
     this.profile = data.profile;
     this.world = data.world;
@@ -240,6 +274,7 @@ export class Battle extends Phaser.Scene {
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.handleResize, this);
+      this.resetUiState();
     });
   }
 
