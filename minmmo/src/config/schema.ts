@@ -27,6 +27,7 @@ export interface Effect {
   kind: EffectKind
   valueType?: ValueType; amount?: number; percent?: number; formula?: Formula; min?: number; max?: number
   element?: Element; canMiss?: boolean; canCrit?: boolean
+  sharedAccuracyRoll?: boolean
   resource?: Resource
   stat?: 'atk'|'def'|'maxHp'|'maxSta'|'maxMp'
   statusId?: StatusId; statusTurns?: number; cleanseTags?: string[]

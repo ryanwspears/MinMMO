@@ -59,6 +59,7 @@ function flatEffect(kind: RuntimeEffect['kind'], amount: number): RuntimeEffect 
     },
     canCrit: false,
     canMiss: false,
+    sharedAccuracyRoll: true,
   }
 }
 

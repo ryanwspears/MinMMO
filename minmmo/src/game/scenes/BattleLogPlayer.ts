@@ -12,7 +12,7 @@ export class BattleLogPlayer {
 
   private readonly scene: Phaser.Scene;
 
-  private readonly maxLines: number;
+  private maxLines: number;
 
   private readonly charDelay: number;
 
@@ -101,6 +101,19 @@ export class BattleLogPlayer {
       });
     }
     return this.drainPromise;
+  }
+
+  setMaxLines(lines: number) {
+    const normalized = Math.max(1, Math.floor(lines));
+    if (normalized === this.maxLines) {
+      return;
+    }
+    this.maxLines = normalized;
+    if (this.displayed.length > this.maxLines) {
+      this.displayed = this.displayed.slice(-this.maxLines);
+    }
+    const partial = this.playing && this.currentIndex > 0 ? this.currentLine.slice(0, this.currentIndex) : undefined;
+    this.refreshText(partial);
   }
 
   private requestSkip() {

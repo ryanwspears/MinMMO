@@ -6,6 +6,7 @@ import { createState } from '@engine/battle/state'
 import type { Actor, BattleState } from '@engine/battle/types'
 import { DEFAULTS } from '@config/defaults'
 import * as configStore from '@config/store'
+import * as registry from '@content/registry'
 
 function makeActor(id: string, overrides: Partial<Actor['stats']> = {}): Actor {
   return {
@@ -50,6 +51,7 @@ function flatEffect(kind: RuntimeEffect['kind'], amount: number): RuntimeEffect 
     },
     canCrit: false,
     canMiss: false,
+    sharedAccuracyRoll: true,
   }
 }
 
@@ -63,6 +65,7 @@ function percentEffect(kind: RuntimeEffect['kind'], fraction: number): RuntimeEf
     },
     canCrit: false,
     canMiss: false,
+    sharedAccuracyRoll: true,
   }
 }
 
@@ -104,6 +107,7 @@ function makeState(player: Actor, enemy: Actor): BattleState {
 }
 
 let configSpy: ReturnType<typeof vi.spyOn> | undefined
+let statusesSpy: ReturnType<typeof vi.spyOn> | undefined
 
 beforeEach(() => {
   const cfg = JSON.parse(JSON.stringify(DEFAULTS))
@@ -114,10 +118,12 @@ beforeEach(() => {
   cfg.balance.ELEMENT_MATRIX = { neutral: { neutral: 1 } }
   cfg.balance.RESISTS_BY_TAG = {}
   configSpy = vi.spyOn(configStore, 'CONFIG').mockReturnValue(cfg)
+  statusesSpy = vi.spyOn(registry, 'Statuses').mockReturnValue({})
 })
 
 afterEach(() => {
   configSpy?.mockRestore()
+  statusesSpy?.mockRestore()
   vi.restoreAllMocks()
 })
 
@@ -236,6 +242,56 @@ describe('battle actions basics', () => {
     expect(state.actors[player.id]?.stats.sta).toBe(20)
     expect(state.actors[player.id]?.stats.mp).toBe(15)
     expect(state.log[state.log.length - 1]).toBe('Manual Bolt has no valid targets.')
+  })
+
+  it('skips status applications when the shared accuracy roll misses', () => {
+    const player = makeActor('P1')
+    const enemy = makeActor('E1')
+    const state = makeState(player, enemy)
+
+    const cfg = configStore.CONFIG()
+    cfg.balance.BASE_HIT = -1
+
+    statusesSpy?.mockReturnValue({
+      Burn: {
+        id: 'Burn',
+        name: 'Burn',
+        stackRule: 'renew',
+        maxStacks: 1,
+        durationTurns: 2,
+        tags: [],
+        modifiers: {},
+        hooks: {
+          onApply: [],
+          onTurnStart: [],
+          onTurnEnd: [],
+          onDealDamage: [],
+          onTakeDamage: [],
+          onExpire: [],
+        },
+      },
+    })
+
+    const scorch = makeSkill({
+      name: 'Scorch',
+      effects: [
+        { ...flatEffect('damage', 20), canMiss: true },
+        {
+          ...flatEffect('applyStatus', 0),
+          canMiss: true,
+          statusId: 'Burn',
+          statusTurns: 2,
+        },
+      ],
+    })
+
+    const result = useSkill(state, scorch, player.id, [enemy.id])
+
+    expect(result.ok).toBe(true)
+    expect(state.actors[enemy.id]?.stats.hp).toBe(100)
+    expect(state.actors[enemy.id]?.statuses.length).toBe(0)
+    expect(state.log.some((line) => line.includes('missed'))).toBe(true)
+    expect(state.log.some((line) => line.includes('afflicted'))).toBe(false)
   })
 
   it('advances the turn order when ending a turn', () => {
