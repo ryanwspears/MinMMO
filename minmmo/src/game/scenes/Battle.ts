@@ -246,10 +246,19 @@ export class Battle extends Phaser.Scene {
 
   private buildStaticUi() {
     const layout = this.layout ?? this.computeLayout();
-    this.headerTitle = this.add.text(layout.header.x + 16, layout.header.y + 16, 'Battle — defeat all enemies!', {
-      color: '#e6e8ef',
-      fontSize: '18px',
-    });
+    if (layout.header.width > 0 && layout.header.height > 0) {
+      if (!this.headerTitle) {
+        this.headerTitle = this.add.text(layout.header.x + 16, layout.header.y + 16, 'Battle — defeat all enemies!', {
+          color: '#e6e8ef',
+          fontSize: '18px',
+        });
+      } else {
+        this.headerTitle.setPosition(layout.header.x + 16, layout.header.y + 16);
+      }
+    } else if (this.headerTitle) {
+      this.headerTitle.destroy();
+      this.headerTitle = undefined;
+    }
     for (const card of Object.values(this.actorCards)) {
       card.container.destroy(true);
     }
@@ -1051,28 +1060,26 @@ export class Battle extends Phaser.Scene {
     }
 
     const stageRect = layout.stage;
-    const sidebarRect = layout.sidebar;
-    const stageLeft = stageRect.x;
     const stageWidth = Math.max(0, stageRect.width);
-    const stageRight = stageLeft + stageWidth;
-    const sidebarLeft = sidebarRect.width > 0 ? sidebarRect.x : stageRight;
-    const gapWidth = Math.max(0, sidebarLeft - stageRight);
-    const availableWidth = stageWidth > 0 ? stageWidth : Math.max(0, sidebarRect.width);
-    const buttonWidth = Math.max(160, Math.min(280, availableWidth > 0 ? Math.round(availableWidth * 0.35) : 220));
-    const buttonHeight = Math.max(44, Math.min(60, Math.round(buttonWidth * 0.28)));
-    const anchorCenter =
-      sidebarRect.width > 0
-        ? stageRight + gapWidth / 2
-        : stageWidth > 0
-          ? stageLeft + stageWidth / 2
-          : stageLeft + buttonWidth / 2;
-    const buttonLeft = Math.round(anchorCenter - buttonWidth / 2);
-    const stageHeight = Math.max(0, layout.stage.height);
-    const centerY = layout.stage.y + Math.max(0, stageHeight / 2 - buttonHeight / 2);
+    const stageHeight = Math.max(0, stageRect.height);
+    const availableWidth = stageWidth > 0 ? stageWidth : Math.max(0, layout.sidebar.width);
+    const buttonWidth = Math.max(160, Math.min(280, availableWidth > 0 ? Math.round(availableWidth * 0.32) : 220));
+    const buttonHeight = Math.max(44, Math.min(60, Math.round(buttonWidth * 0.3)));
+    const anchorCenter = stageWidth > 0 ? stageRect.x + stageWidth / 2 : stageRect.x + buttonWidth / 2;
+    const horizontalPadding = stageWidth > 0 ? Math.min(32, Math.round(stageWidth * 0.08)) : 16;
+    const minLeft = stageRect.x + horizontalPadding;
+    const maxLeft = stageWidth > 0 ? stageRect.x + stageWidth - buttonWidth - horizontalPadding : minLeft;
+    const rawLeft = Math.round(anchorCenter - buttonWidth / 2);
+    const buttonLeft = stageWidth > 0 ? Phaser.Math.Clamp(rawLeft, minLeft, Math.max(minLeft, maxLeft)) : rawLeft;
+    const verticalPadding = stageHeight > 0 ? Math.min(32, Math.round(stageHeight * 0.08)) : 16;
+    const minTop = stageRect.y + verticalPadding;
+    const maxTop = stageHeight > 0 ? stageRect.y + stageHeight - buttonHeight - verticalPadding : minTop;
+    const rawTop = Math.round(stageRect.y + stageHeight / 2 - buttonHeight / 2);
+    const buttonTop = stageHeight > 0 ? Phaser.Math.Clamp(rawTop, minTop, Math.max(minTop, maxTop)) : stageRect.y;
 
     cancelButton.width = buttonWidth;
     cancelButton.height = buttonHeight;
-    cancelButton.container.setPosition(buttonLeft, centerY);
+    cancelButton.container.setPosition(buttonLeft, buttonTop);
     cancelButton.container.setSize(buttonWidth, buttonHeight);
     cancelButton.container.setDepth(6);
     cancelButton.hitArea.setPosition(0, 0);
@@ -1397,152 +1404,142 @@ export class Battle extends Phaser.Scene {
     const safeHeight = Math.max(320, height);
     const padding = 20;
     const gap = 20;
-    const headerHeight = 64;
-    const contentWidth = Math.max(160, safeWidth - padding * 2);
-    const columnsWidth = Math.max(120, contentWidth - gap);
-    const desiredStageRatio = 0.58;
-    let stageWidth = Math.round(columnsWidth * desiredStageRatio);
-    let sidebarWidth = columnsWidth - stageWidth;
-    const desiredStageMin = 160;
-    const desiredSidebarMin = 160;
-    if (stageWidth < desiredStageMin) {
-      stageWidth = desiredStageMin;
-      sidebarWidth = columnsWidth - stageWidth;
-    }
-    if (sidebarWidth < desiredSidebarMin) {
-      sidebarWidth = desiredSidebarMin;
-      stageWidth = columnsWidth - sidebarWidth;
-    }
-    if (stageWidth < 120) {
-      stageWidth = 120;
-      sidebarWidth = columnsWidth - stageWidth;
-    }
-    if (sidebarWidth < 120) {
-      sidebarWidth = 120;
-      stageWidth = columnsWidth - sidebarWidth;
-    }
-    if (stageWidth + sidebarWidth > columnsWidth) {
-      const total = stageWidth + sidebarWidth;
-      if (total > 0) {
-        const scale = columnsWidth / total;
-        stageWidth = Math.max(80, Math.round(stageWidth * scale));
-        sidebarWidth = Math.max(80, Math.round(sidebarWidth * scale));
-      }
-    }
-    stageWidth = Math.min(stageWidth, columnsWidth);
-    sidebarWidth = Math.max(0, columnsWidth - stageWidth);
 
     const headerRect: LayoutRect = {
       x: padding,
       y: padding,
-      width: contentWidth,
-      height: headerHeight,
+      width: 0,
+      height: 0,
     };
+
+    const contentWidth = Math.max(160, safeWidth - padding * 2);
+    const contentHeight = Math.max(160, safeHeight - padding * 2);
+    const combinedWidth = Math.max(0, contentWidth - gap);
+    const minStageWidth = 260;
+    const minSidebarWidth = 240;
+    let stageWidth = Math.round(combinedWidth * 0.58);
+    let sidebarWidth = combinedWidth - stageWidth;
+
+    if (combinedWidth <= 0) {
+      stageWidth = 0;
+      sidebarWidth = 0;
+    } else if (combinedWidth < minStageWidth + minSidebarWidth) {
+      const scale = combinedWidth / (minStageWidth + minSidebarWidth);
+      stageWidth = Math.max(160, Math.round(minStageWidth * scale));
+      sidebarWidth = Math.max(120, combinedWidth - stageWidth);
+    } else {
+      if (stageWidth < minStageWidth) {
+        stageWidth = minStageWidth;
+      }
+      sidebarWidth = combinedWidth - stageWidth;
+      if (sidebarWidth < minSidebarWidth) {
+        sidebarWidth = minSidebarWidth;
+        stageWidth = Math.max(minStageWidth, combinedWidth - sidebarWidth);
+      }
+    }
+
+    stageWidth = Phaser.Math.Clamp(stageWidth, 160, combinedWidth);
+    sidebarWidth = Math.max(0, combinedWidth - stageWidth);
 
     const stageRect: LayoutRect = {
       x: padding,
-      y: headerRect.y + headerRect.height + gap,
+      y: headerRect.y + headerRect.height,
       width: stageWidth,
-      height: 0,
+      height: contentHeight,
     };
+
     const sidebarRect: LayoutRect = {
-      x: stageRect.x + stageRect.width + gap,
+      x: stageRect.x + stageRect.width + (sidebarWidth > 0 ? gap : 0),
       y: stageRect.y,
-      width: Math.max(0, contentWidth - stageRect.width - gap),
+      width: sidebarWidth,
       height: 0,
     };
 
-    const totalBelowHeader = Math.max(0, safeHeight - (stageRect.y + padding));
-    let footerHeight = Math.max(100, Math.round(totalBelowHeader * 0.35));
-    const minFooterHeight = 80;
-    if (footerHeight > totalBelowHeader - 120) {
-      footerHeight = Math.max(minFooterHeight, totalBelowHeader - 120);
-    }
-    footerHeight = Math.max(minFooterHeight, Math.min(footerHeight, totalBelowHeader));
-    let stageHeight = Math.max(160, totalBelowHeader - footerHeight - gap);
-    if (stageHeight < 160) {
-      stageHeight = Math.max(100, totalBelowHeader - footerHeight - gap);
-    }
-    if (stageHeight < 100) {
-      stageHeight = Math.max(60, totalBelowHeader - footerHeight - gap);
-    }
-    if (stageHeight + footerHeight + gap > totalBelowHeader) {
-      const excess = stageHeight + footerHeight + gap - totalBelowHeader;
-      stageHeight = Math.max(60, stageHeight - excess);
-      if (stageHeight + footerHeight + gap > totalBelowHeader) {
-        footerHeight = Math.max(minFooterHeight, footerHeight - (stageHeight + footerHeight + gap - totalBelowHeader));
+    const availableRightHeight = contentHeight;
+    let commandHeight = 0;
+    let logHeight = 0;
+    if (sidebarWidth > 0 && availableRightHeight > 0) {
+      const minCommandHeight = 200;
+      const minLogHeight = 160;
+      const availableForPanels = Math.max(0, availableRightHeight - gap);
+      if (availableForPanels <= 0) {
+        commandHeight = availableRightHeight;
+        logHeight = 0;
+      } else if (availableForPanels <= minCommandHeight) {
+        commandHeight = availableForPanels;
+        logHeight = 0;
+      } else if (availableForPanels <= minCommandHeight + minLogHeight) {
+        const ratio = minCommandHeight / (minCommandHeight + minLogHeight);
+        commandHeight = Math.round(availableForPanels * ratio);
+        logHeight = Math.max(0, availableForPanels - commandHeight);
+      } else {
+        commandHeight = Math.round(availableForPanels * 0.55);
+        const maxCommandHeight = availableForPanels - minLogHeight;
+        commandHeight = Phaser.Math.Clamp(
+          commandHeight,
+          minCommandHeight,
+          Math.max(minCommandHeight, maxCommandHeight),
+        );
+        logHeight = Math.max(minLogHeight, availableForPanels - commandHeight);
+        commandHeight = Math.max(minCommandHeight, availableForPanels - logHeight);
       }
     }
-    stageHeight = Math.max(60, Math.min(stageHeight, totalBelowHeader));
-    const footerRect: LayoutRect = {
-      x: padding,
-      y: stageRect.y + stageHeight + gap,
-      width: contentWidth,
-      height: Math.max(0, Math.min(footerHeight, safeHeight - (stageRect.y + stageHeight + gap) - padding)),
-    };
-    if (footerRect.height < minFooterHeight) {
-      footerRect.height = Math.max(minFooterHeight, safeHeight - footerRect.y - padding);
-    }
-    stageRect.height = Math.max(0, Math.min(stageHeight, footerRect.y - stageRect.y - gap));
-    sidebarRect.height = Math.max(stageRect.height, footerRect.y - stageRect.y - gap);
 
-    const stageRight = stageRect.x + stageRect.width;
-    const logPadding = 16;
-    const logLabelHeight = 16;
-    const logLabelSpacing = 6;
-    const minLogContentWidth = 160;
-    const maxLogCardWidth = 360;
-    const computedLogHeight = Math.round(stageRect.height * 0.5);
-    const maxContentHeight = Math.max(160, stageRect.height - 48);
-    const logContentHeight = Phaser.Math.Clamp(
-      computedLogHeight,
-      120,
-      Math.min(220, maxContentHeight),
-    );
-    const logCardHeight = logPadding * 2 + logLabelHeight + logLabelSpacing + logContentHeight;
-    let availableLogWidth =
-      sidebarRect.width > 0 ? Math.max(0, sidebarRect.width - 32) : Math.max(0, stageRect.width - 32);
-    if (availableLogWidth <= 0) {
-      availableLogWidth = minLogContentWidth + logPadding * 2;
-    }
-    let logCardWidth = Math.min(maxLogCardWidth, availableLogWidth);
-    if (availableLogWidth >= minLogContentWidth + logPadding * 2) {
-      logCardWidth = Math.max(minLogContentWidth + logPadding * 2, logCardWidth);
-    }
-    const logContentWidth = Math.max(0, logCardWidth - logPadding * 2);
-    let logCardX = sidebarRect.width > 0 ? sidebarRect.x + 16 : stageRight - logCardWidth - 16;
-    if (logCardX < stageRect.x + 16) {
-      logCardX = stageRect.x + 16;
-    }
-    let logCardY = stageRect.y + stageRect.height - logCardHeight - 20;
-    logCardY = Math.min(logCardY, footerRect.y - logCardHeight - 16);
-    logCardY = Math.max(stageRect.y + 16, logCardY);
-    const logContentRect: LayoutRect = {
-      x: logCardX + logPadding,
-      y: logCardY + logPadding + logLabelHeight + logLabelSpacing,
-      width: Math.max(0, logContentWidth),
-      height: Math.max(0, logContentHeight),
+    sidebarRect.height = Math.max(0, Math.min(availableRightHeight, commandHeight));
+    const hasFooter = logHeight > 0 && sidebarWidth > 0;
+    const footerGap = hasFooter && sidebarRect.height > 0 ? gap : 0;
+    const footerY = sidebarRect.y + sidebarRect.height + footerGap;
+    const footerRect: LayoutRect = {
+      x: sidebarRect.x,
+      y: footerY,
+      width: sidebarRect.width,
+      height: hasFooter
+        ? Math.max(0, Math.min(logHeight, stageRect.y + contentHeight - footerY))
+        : 0,
     };
+
+    if (!hasFooter && sidebarWidth > 0) {
+      sidebarRect.height = Math.max(0, availableRightHeight);
+    }
+
+    stageRect.height = contentHeight;
+
+    const logOuterPadding = 18;
+    const logInnerPadding = 16;
+    const logLabelHeight = 18;
+    const logLabelSpacing = 8;
     const logCardRect: LayoutRect = {
-      x: logCardX,
-      y: logCardY,
-      width: Math.max(0, logCardWidth),
-      height: Math.max(0, logCardHeight),
+      x: footerRect.x + logOuterPadding,
+      y: footerRect.y + logOuterPadding,
+      width: Math.max(0, footerRect.width - logOuterPadding * 2),
+      height: Math.max(0, footerRect.height - logOuterPadding * 2),
     };
     const logLabelPosition = {
-      x: logCardX + logPadding,
-      y: logCardY + logPadding,
+      x: logCardRect.x + logInnerPadding,
+      y: logCardRect.y + logInnerPadding,
+    };
+    const logContentRect: LayoutRect = {
+      x: logLabelPosition.x,
+      y: logLabelPosition.y + logLabelHeight + logLabelSpacing,
+      width: Math.max(0, logCardRect.width - logInnerPadding * 2),
+      height: Math.max(
+        0,
+        logCardRect.height - (logInnerPadding * 2 + logLabelHeight + logLabelSpacing),
+      ),
     };
 
     const commandPanelPadding = 16;
     const commandPanel: LayoutRect = {
-      x: footerRect.x + commandPanelPadding,
-      y: footerRect.y + commandPanelPadding,
-      width: Math.max(0, footerRect.width - commandPanelPadding * 2),
-      height: Math.max(0, footerRect.height - commandPanelPadding * 2),
+      x: sidebarRect.x + commandPanelPadding,
+      y: sidebarRect.y + commandPanelPadding,
+      width: Math.max(0, sidebarRect.width - commandPanelPadding * 2),
+      height: Math.max(0, sidebarRect.height - commandPanelPadding * 2),
     };
     const baseTabHeight = 36;
-    const commandTabsHeight = Math.min(commandPanel.height, Math.max(30, Math.min(40, baseTabHeight)));
+    const commandTabsHeight = Math.min(
+      commandPanel.height,
+      Math.max(30, Math.min(40, baseTabHeight)),
+    );
     const commandTabs: LayoutRect = {
       x: commandPanel.x,
       y: commandPanel.y,
@@ -1562,16 +1559,16 @@ export class Battle extends Phaser.Scene {
     if (commandFooterHeight + commandFooterSpacing > maxFooterSpace) {
       commandFooterSpacing = Math.max(0, maxFooterSpace - commandFooterHeight);
     }
-    let footerY = commandBottom - commandFooterHeight;
-    if (footerY < commandContentTop) {
-      footerY = commandContentTop;
-      commandFooterHeight = Math.max(0, commandBottom - footerY);
+    let footerYPanel = commandBottom - commandFooterHeight;
+    if (footerYPanel < commandContentTop) {
+      footerYPanel = commandContentTop;
+      commandFooterHeight = Math.max(0, commandBottom - footerYPanel);
       commandFooterSpacing = 0;
     }
-    let commandContentHeight = Math.max(0, footerY - commandContentTop - commandFooterSpacing);
+    let commandContentHeight = Math.max(0, footerYPanel - commandContentTop - commandFooterSpacing);
     if (commandContentHeight <= 0) {
       commandFooterSpacing = 0;
-      commandContentHeight = Math.max(0, footerY - commandContentTop);
+      commandContentHeight = Math.max(0, footerYPanel - commandContentTop);
     }
     const commandContent: LayoutRect = {
       x: commandPanel.x,
@@ -1581,11 +1578,14 @@ export class Battle extends Phaser.Scene {
     };
     const commandFooter: LayoutRect = {
       x: commandPanel.x,
-      y: footerY,
+      y: footerYPanel,
       width: commandPanel.width,
-      height: Math.max(0, commandBottom - footerY),
+      height: Math.max(0, commandBottom - footerYPanel),
     };
-    const commandRowHeight = Math.max(42, Math.min(60, Math.round(Math.max(44, commandPanel.height * 0.28))));
+    const commandRowHeight = Math.max(
+      42,
+      Math.min(60, Math.round(Math.max(44, commandPanel.height * 0.28))),
+    );
     const commandRowSpacing = Math.max(8, Math.round(commandRowHeight * 0.25));
     const commandIconWidth = Math.max(48, Math.min(96, Math.round(commandPanel.width * 0.22)));
     const commandTextPadding = 14;
@@ -1618,24 +1618,34 @@ export class Battle extends Phaser.Scene {
       statusY,
     };
 
-    const playerCardWidth = computeCardWidth(stageRect.width - cardPadding * 2);
+    const stageInnerWidth = Math.max(0, stageRect.width - cardPadding * 2);
+    let columnGap = stageInnerWidth > 0 ? Math.max(16, Math.round(stageInnerWidth * 0.08)) : 0;
+    if (columnGap > stageInnerWidth) {
+      columnGap = 0;
+    }
+    let columnWidth = stageInnerWidth > 0 ? Math.floor((stageInnerWidth - columnGap) / 2) : 0;
+    if (columnWidth <= 0 && stageInnerWidth > 0) {
+      columnGap = 0;
+      columnWidth = Math.floor(stageInnerWidth / 2);
+    }
+    columnWidth = Math.max(0, columnWidth);
+
+    const playerCardWidth = computeCardWidth(columnWidth);
     const playerCard: LayoutRect = {
       x: stageRect.x + cardPadding,
       y: stageRect.y + cardPadding,
-      width: Math.max(0, playerCardWidth),
+      width: Math.max(0, Math.min(playerCardWidth, stageInnerWidth)),
       height: cardHeight,
     };
 
-    const sidebarAvailableWidth = sidebarRect.width > 0 ? sidebarRect.width : stageRect.width;
-    const enemyCardWidth = computeCardWidth(sidebarAvailableWidth - cardPadding * 2);
+    const enemyCardWidth = computeCardWidth(columnWidth);
     const enemyCardHeight = cardHeight;
-    const enemyColumnX =
-      sidebarRect.width > 0 ? sidebarRect.x + cardPadding : Math.max(stageRect.x + cardPadding, playerCard.x);
-    const enemyStartY =
-      sidebarRect.width > 0 ? sidebarRect.y + cardPadding : playerCard.y + playerCard.height + cardPadding;
+    const enemyColumnX = stageRect.x + stageRect.width - cardPadding - enemyCardWidth;
+    const enemyStartY = stageRect.y + cardPadding;
     const enemySpacing = enemyCardHeight + cardPadding;
-    const targetX = Math.max(stageRect.x + 16, logCardX);
-    const rightColumnX = logCardX;
+
+    const targetX = stageRect.x + stageRect.width / 2;
+    const rightColumnX = sidebarRect.x;
 
     return {
       header: headerRect,
@@ -1745,11 +1755,16 @@ export class Battle extends Phaser.Scene {
       return;
     }
     const card = layout.logCard;
+    const visible = card.width > 0 && card.height > 0;
+    this.logCardBackground.setVisible(visible);
     const radius = 14;
     const borderColor = 0x20264a;
     const glowColorStart = 0x7c5cff;
     const glowColorEnd = 0x58a2ff;
     this.logCardBackground.clear();
+    if (!visible) {
+      return;
+    }
     this.logCardBackground.lineStyle(4, 0x000000, 0.16);
     this.logCardBackground.strokeRoundedRect(card.x, card.y, card.width, card.height, radius);
     this.logCardBackground.fillGradientStyle(0x151936, 0x151936, 0x11162a, 0x11162a, 0.95);
@@ -1771,11 +1786,15 @@ export class Battle extends Phaser.Scene {
     this.logText.setPosition(layout.logContent.x, layout.logContent.y);
     this.logText.setWordWrapWidth(layout.logContent.width);
     this.logText.setFixedSize(layout.logContent.width, layout.logContent.height);
+    const hasLogSpace = layout.logContent.width > 0 && layout.logContent.height > 0;
+    this.logText.setVisible(hasLogSpace);
     if (this.logPlayer) {
       const maxLogLines = Math.max(4, Math.floor(layout.logContent.height / 20));
       this.logPlayer.setMaxLines(maxLogLines);
     }
     if (this.logLabel) {
+      const labelVisible = layout.logCard.width > 0 && layout.logCard.height > 0;
+      this.logLabel.setVisible(labelVisible);
       this.logLabel.setPosition(layout.logLabel.x, layout.logLabel.y);
     }
     if (this.headerTitle) {
