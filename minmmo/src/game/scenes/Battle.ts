@@ -123,6 +123,7 @@ interface ActorCardElements {
   container: Phaser.GameObjects.Container;
   background: Phaser.GameObjects.Graphics;
   highlight: Phaser.GameObjects.Graphics;
+  outline: Phaser.GameObjects.Graphics;
   portrait: Phaser.GameObjects.Ellipse;
   nameText: Phaser.GameObjects.Text;
   classText: Phaser.GameObjects.Text;
@@ -278,6 +279,12 @@ export class Battle extends Phaser.Scene {
     const background = this.add.graphics();
     container.add(background);
 
+    const highlight = this.add.graphics();
+    container.add(highlight);
+
+    const outline = this.add.graphics();
+    container.add(outline);
+
     const portrait = this.add.ellipse(0, 0, 56, 56, 0x1d223d, 0.9);
     portrait.setStrokeStyle(2, 0x2f3659, 0.9);
     container.add(portrait);
@@ -309,9 +316,6 @@ export class Battle extends Phaser.Scene {
     const overlay = this.add.graphics();
     container.add(overlay);
 
-    const highlight = this.add.graphics();
-    container.add(highlight);
-
     const hitArea = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0).setOrigin(0, 0);
     hitArea.setScrollFactor(0);
     container.add(hitArea);
@@ -321,6 +325,7 @@ export class Battle extends Phaser.Scene {
       container,
       background,
       highlight,
+      outline,
       portrait,
       nameText,
       classText,
@@ -338,12 +343,16 @@ export class Battle extends Phaser.Scene {
 
     hitArea.disableInteractive();
     hitArea.on('pointerover', () => {
+      if (!this.targetSelectionActive) return;
+      if (!this.targetCandidates.has(card.actorId)) return;
       card.hover = true;
       this.applyActorCardState(card, card.state);
     });
     hitArea.on('pointerout', () => {
-      card.hover = false;
-      this.applyActorCardState(card, card.state);
+      if (card.hover) {
+        card.hover = false;
+        this.applyActorCardState(card, card.state);
+      }
     });
     hitArea.on('pointerdown', () => {
       if (!this.targetSelectionActive) return;
@@ -364,10 +373,12 @@ export class Battle extends Phaser.Scene {
     card.cornerRadius = radius;
 
     card.background.setPosition(0, 0);
-    card.overlay.setPosition(0, 0);
     card.highlight.setPosition(0, 0);
-    card.overlay.clear();
+    card.outline.setPosition(0, 0);
+    card.overlay.setPosition(0, 0);
     card.highlight.clear();
+    card.outline.clear();
+    card.overlay.clear();
     card.hitArea.setPosition(0, 0);
     card.hitArea.setSize(rect.width, rect.height);
     card.hitArea.setDisplaySize(rect.width, rect.height);
@@ -431,6 +442,8 @@ export class Battle extends Phaser.Scene {
     let overlayAlpha = 0;
     let highlightColor = 0;
     let highlightAlpha = 0;
+    let outlineColor = 0;
+    let outlineAlpha = 0;
     let portraitFill = 0x1d223d;
     let portraitFillAlpha = 0.9;
     let portraitStroke = 0x2f3659;
@@ -453,6 +466,8 @@ export class Battle extends Phaser.Scene {
         palette.topAlpha = 0.12;
         highlightColor = 0xf6d465;
         highlightAlpha = 0.95;
+        outlineColor = 0xf6d465;
+        outlineAlpha = 0.8;
         portraitFill = 0x23294d;
         portraitFillAlpha = 0.95;
         portraitStroke = 0xf6d465;
@@ -473,6 +488,8 @@ export class Battle extends Phaser.Scene {
         palette.topAlpha = 0.1;
         highlightColor = 0x42e3a7;
         highlightAlpha = hovered ? 1 : 0.88;
+        outlineColor = 0x42e3a7;
+        outlineAlpha = Math.min(1, (hovered ? 1 : 0.88) * 0.8);
         overlayColor = 0x2cd98d;
         overlayAlpha = hovered ? 0.24 : 0.16;
         portraitFill = 0x1a2f25;
@@ -543,12 +560,16 @@ export class Battle extends Phaser.Scene {
     }
 
     card.highlight.clear();
+    card.outline.clear();
     if (highlightAlpha > 0 && width > 0 && height > 0) {
       const outerRadius = Math.max(0, radius + 2);
       card.highlight.lineStyle(4, highlightColor, highlightAlpha);
       card.highlight.strokeRoundedRect(-2, -2, width + 4, height + 4, outerRadius);
-      card.highlight.lineStyle(1.5, highlightColor, Math.min(1, highlightAlpha * 0.8));
-      card.highlight.strokeRoundedRect(1, 1, Math.max(0, width - 2), Math.max(0, height - 2), Math.max(0, radius - 2));
+    }
+
+    if (outlineAlpha > 0 && width > 0 && height > 0) {
+      card.outline.lineStyle(1.5, outlineColor, outlineAlpha);
+      card.outline.strokeRoundedRect(1, 1, Math.max(0, width - 2), Math.max(0, height - 2), Math.max(0, radius - 2));
     }
 
     if (
