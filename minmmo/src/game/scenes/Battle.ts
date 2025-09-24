@@ -1050,19 +1050,29 @@ export class Battle extends Phaser.Scene {
       return;
     }
 
-    const stageLeft = layout.stage.x;
-    const stageRight =
-      layout.sidebar.width > 0 ? layout.sidebar.x + layout.sidebar.width : layout.stage.x + layout.stage.width;
-    const availableWidth = Math.max(0, stageRight - stageLeft);
+    const stageRect = layout.stage;
+    const sidebarRect = layout.sidebar;
+    const stageLeft = stageRect.x;
+    const stageWidth = Math.max(0, stageRect.width);
+    const stageRight = stageLeft + stageWidth;
+    const sidebarLeft = sidebarRect.width > 0 ? sidebarRect.x : stageRight;
+    const gapWidth = Math.max(0, sidebarLeft - stageRight);
+    const availableWidth = stageWidth > 0 ? stageWidth : Math.max(0, sidebarRect.width);
     const buttonWidth = Math.max(160, Math.min(280, availableWidth > 0 ? Math.round(availableWidth * 0.35) : 220));
     const buttonHeight = Math.max(44, Math.min(60, Math.round(buttonWidth * 0.28)));
-    const centerX = stageLeft + Math.max(0, (availableWidth - buttonWidth) / 2);
+    const anchorCenter =
+      sidebarRect.width > 0
+        ? stageRight + gapWidth / 2
+        : stageWidth > 0
+          ? stageLeft + stageWidth / 2
+          : stageLeft + buttonWidth / 2;
+    const buttonLeft = Math.round(anchorCenter - buttonWidth / 2);
     const stageHeight = Math.max(0, layout.stage.height);
     const centerY = layout.stage.y + Math.max(0, stageHeight / 2 - buttonHeight / 2);
 
     cancelButton.width = buttonWidth;
     cancelButton.height = buttonHeight;
-    cancelButton.container.setPosition(centerX, centerY);
+    cancelButton.container.setPosition(buttonLeft, centerY);
     cancelButton.container.setSize(buttonWidth, buttonHeight);
     cancelButton.container.setDepth(6);
     cancelButton.hitArea.setPosition(0, 0);
