@@ -71,7 +71,6 @@ interface LayoutMetrics {
   commandPanel: LayoutRect;
   commandTabs: LayoutRect;
   commandContent: LayoutRect;
-  commandFooter: LayoutRect;
   commandTabSpacing: number;
   commandRowHeight: number;
   commandRowSpacing: number;
@@ -86,7 +85,7 @@ interface LayoutMetrics {
   cardLayout: CardLayoutMetrics;
 }
 
-type CommandTab = 'actions' | 'skills' | 'items';
+type CommandTab = 'skills' | 'items' | 'actions';
 
 interface CommandTabButton {
   key: CommandTab;
@@ -155,7 +154,7 @@ export class Battle extends Phaser.Scene {
   private logPlayer!: BattleLogPlayer;
   private logLabel?: Phaser.GameObjects.Text;
   private headerTitle?: Phaser.GameObjects.Text;
-  private commandTab: CommandTab = 'actions';
+  private commandTab: CommandTab = 'skills';
   private commandTabButtons: CommandTabButton[] = [];
   private commandPanelBackground?: Phaser.GameObjects.Graphics;
   private commandContentBackground?: Phaser.GameObjects.Graphics;
@@ -272,14 +271,6 @@ export class Battle extends Phaser.Scene {
       if (!actor) continue;
       this.actorCards[enemyId] = this.createActorCard(actor);
     }
-
-    if (!this.commandFooterButtons.length) {
-      this.commandFooterButtons = [
-        this.createFooterButton('End Turn', 'endTurn', () => void this.handleEndTurn()),
-        this.createFooterButton('Flee', 'flee', () => void this.handleFlee()),
-      ];
-    }
-
   }
 
   private createActorCard(actor: Actor): ActorCardElements {
@@ -303,7 +294,7 @@ export class Battle extends Phaser.Scene {
       fontSize: '16px',
       fontStyle: 'bold',
     });
-    const classText = this.add.text(0, 0, actor.clazz ?? 'Adventurer', {
+    const classText = this.add.text(0, 0, actor.clazz ?? '', {
       color: '#a99efc',
       fontSize: '13px',
     });
@@ -631,9 +622,9 @@ export class Battle extends Phaser.Scene {
 
     if (!this.commandTabButtons.length) {
       const tabDefs: Array<{ key: CommandTab; label: string }> = [
-        { key: 'actions', label: 'Actions' },
         { key: 'skills', label: 'Skills' },
         { key: 'items', label: 'Items' },
+        { key: 'actions', label: 'Actions' },
       ];
       for (const def of tabDefs) {
         const container = this.add.container(0, 0);
@@ -878,7 +869,6 @@ export class Battle extends Phaser.Scene {
     }
 
     const contentRect = layout.commandContent;
-    const footerRect = layout.commandFooter;
     const hasContent = contentRect.width > 0 && contentRect.height > 0;
     this.commandContentBackground.setVisible(hasContent);
     this.commandContentBackground.clear();
@@ -996,48 +986,6 @@ export class Battle extends Phaser.Scene {
       if (row.tab !== this.commandTab) {
         row.container.setVisible(false);
       }
-    }
-
-    this.layoutFooterButtons(layout, hasPanel && (footerRect.width > 0 && footerRect.height > 0));
-  }
-
-  private layoutFooterButtons(layout: LayoutMetrics, visible: boolean) {
-    if (!this.commandFooterButtons.length) {
-      return;
-    }
-    const footerRect = layout.commandFooter;
-    const buttons = this.commandFooterButtons;
-    if (!visible) {
-      for (const button of buttons) {
-        button.container.setVisible(false);
-      }
-      return;
-    }
-    const buttonCount = buttons.length;
-    if (buttonCount === 0) {
-      return;
-    }
-    const spacing = buttonCount > 1 ? Math.max(12, Math.min(24, Math.round(footerRect.width * 0.06))) : 0;
-    const widthAvailable = Math.max(0, footerRect.width - spacing * (buttonCount - 1));
-    const rawWidth = buttonCount > 0 ? widthAvailable / buttonCount : widthAvailable;
-    const buttonWidth = Math.max(0, rawWidth);
-    const desiredHeight = Math.max(36, Math.round(footerRect.height * 0.7));
-    const buttonHeight = Math.max(36, Math.min(footerRect.height, desiredHeight));
-    let x = footerRect.x;
-    const y = footerRect.y + Math.max(0, (footerRect.height - buttonHeight) / 2);
-    for (const button of buttons) {
-      button.container.setVisible(true);
-      button.container.setPosition(x, y);
-      button.container.setDepth(5);
-      button.width = buttonWidth;
-      button.height = buttonHeight;
-      button.container.setSize(buttonWidth, buttonHeight);
-      button.hitArea.setPosition(0, 0);
-      button.hitArea.setSize(buttonWidth, buttonHeight);
-      button.hitArea.setDisplaySize(buttonWidth, buttonHeight);
-      button.label.setPosition(buttonWidth / 2 - button.label.width / 2, buttonHeight / 2 - button.label.height / 2);
-      this.updateFooterButtonAppearance(button);
-      x += buttonWidth + spacing;
     }
   }
 
@@ -1565,22 +1513,16 @@ export class Battle extends Phaser.Scene {
       commandFooterHeight = Math.max(0, commandBottom - footerYPanel);
       commandFooterSpacing = 0;
     }
-    let commandContentHeight = Math.max(0, footerYPanel - commandContentTop - commandFooterSpacing);
+    let commandContentHeight = Math.max(0, commandContentTop - commandFooterSpacing);
     if (commandContentHeight <= 0) {
       commandFooterSpacing = 0;
-      commandContentHeight = Math.max(0, footerYPanel - commandContentTop);
+      commandContentHeight = Math.max(0, commandContentTop);
     }
     const commandContent: LayoutRect = {
       x: commandPanel.x,
       y: commandContentTop,
       width: commandPanel.width,
       height: Math.max(0, commandContentHeight),
-    };
-    const commandFooter: LayoutRect = {
-      x: commandPanel.x,
-      y: footerYPanel,
-      width: commandPanel.width,
-      height: Math.max(0, commandBottom - footerYPanel),
     };
     const commandRowHeight = Math.max(
       42,
@@ -1657,7 +1599,6 @@ export class Battle extends Phaser.Scene {
       commandPanel,
       commandTabs,
       commandContent,
-      commandFooter,
       commandTabSpacing,
       commandRowHeight,
       commandRowSpacing,
@@ -2090,7 +2031,7 @@ export class Battle extends Phaser.Scene {
     const cardState = this.getCardStateForActor(actor);
 
     card.nameText.setText(actor.name);
-    card.classText.setText(actor.clazz ?? 'Adventurer');
+    card.classText.setText(actor.clazz ?? '');
     card.levelText.setText(`Lv. ${actor.stats.lv}`);
 
     const statuses = actor.statuses.length
