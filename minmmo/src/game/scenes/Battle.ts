@@ -1365,9 +1365,9 @@ export class Battle extends Phaser.Scene {
     });
     this.targetButtons.push(cancelButton);
 
-    this.refreshCommandAvailability();
     this.renderState();
     this.layoutUi();
+    this.refreshCommandAvailability();
   }
 
   private clearTargetPicker() {
@@ -1379,9 +1379,9 @@ export class Battle extends Phaser.Scene {
     this.targetPickCallback = undefined;
     this.targetSelectionActive = false;
 
-    this.refreshCommandAvailability();
     this.renderState();
     this.layoutUi();
+    this.refreshCommandAvailability();
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
@@ -1801,7 +1801,9 @@ export class Battle extends Phaser.Scene {
         }
         button.container.setAlpha(1);
       } else {
-        button.hitArea.disableInteractive();
+        if (button.hitArea.input?.enabled) {
+          button.hitArea.disableInteractive();
+        }
         button.container.setAlpha(button.key === this.commandTab ? 0.8 : 0.6);
       }
     }
@@ -1813,7 +1815,9 @@ export class Battle extends Phaser.Scene {
         }
         row.container.setAlpha(1);
       } else {
-        row.hitArea.disableInteractive();
+        if (row.hitArea.input?.enabled) {
+          row.hitArea.disableInteractive();
+        }
         if (row.tab === this.commandTab) {
           row.container.setAlpha(row.onClick ? 0.6 : 0.75);
         } else {
@@ -1829,7 +1833,9 @@ export class Battle extends Phaser.Scene {
           button.hitArea.setInteractive({ useHandCursor: true });
         }
       } else {
-        button.hitArea.disableInteractive();
+        if (button.hitArea.input?.enabled) {
+          button.hitArea.disableInteractive();
+        }
         if (!interactive) {
           button.hover = false;
         }
@@ -1870,105 +1876,118 @@ export class Battle extends Phaser.Scene {
   }
 
   private async processEnemyTurns() {
+    const previousBusy = this.busy;
+    if (!this.busy) {
+      this.busy = true;
+    }
+    this.refreshCommandAvailability();
+    this.renderState();
+    this.layoutUi();
+
     let guard = 0;
-    while (!this.state.ended && guard < 100) {
-      guard += 1;
-      const actorId = this.state.order[this.state.current];
-      if (!actorId) {
-        endTurn(this.state);
-        clampInventory(this.state.inventory);
-        this.renderActions();
-        this.renderState();
-        this.layoutUi();
-        await this.logPlayer.drain();
-        continue;
-      }
-      const actor = this.state.actors[actorId];
-      if (!actor) {
-        endTurn(this.state);
-        clampInventory(this.state.inventory);
-        this.renderActions();
-        this.renderState();
-        this.layoutUi();
-        await this.logPlayer.drain();
-        continue;
-      }
-      if (!actor.alive) {
-        const message = `${actor.name} cannot act.`;
-        if (this.state.log[this.state.log.length - 1] !== message) {
-          this.state.log.push(message);
+    try {
+      while (!this.state.ended && guard < 100) {
+        guard += 1;
+        const actorId = this.state.order[this.state.current];
+        if (!actorId) {
+          endTurn(this.state);
+          clampInventory(this.state.inventory);
+          this.renderActions();
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+          continue;
         }
+        const actor = this.state.actors[actorId];
+        if (!actor) {
+          endTurn(this.state);
+          clampInventory(this.state.inventory);
+          this.renderActions();
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+          continue;
+        }
+        if (!actor.alive) {
+          const message = `${actor.name} cannot act.`;
+          if (this.state.log[this.state.log.length - 1] !== message) {
+            this.state.log.push(message);
+          }
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+          endTurn(this.state);
+          clampInventory(this.state.inventory);
+          this.renderActions();
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+          continue;
+        }
+
+        const canAct = this.announceActor(actor);
+        this.renderActions();
         this.renderState();
         this.layoutUi();
         await this.logPlayer.drain();
+
+        if (!canAct) {
+          this.refreshCommandAvailability();
+          this.checkOutcome();
+          if (this.state.ended) {
+            return;
+          }
+          endTurn(this.state);
+          clampInventory(this.state.inventory);
+          this.renderActions();
+          this.renderState();
+          this.layoutUi();
+          await this.logPlayer.drain();
+          this.refreshCommandAvailability();
+          this.checkOutcome();
+          if (this.state.ended) {
+            return;
+          }
+          continue;
+        }
+
+        const isEnemy = this.state.sideEnemy.includes(actorId);
+        if (!isEnemy) {
+          this.refreshCommandAvailability();
+          this.checkOutcome();
+          return;
+        }
+
+        this.executeEnemyTurn(actor);
+        clampInventory(this.state.inventory);
+        this.renderActions();
+        this.renderState();
+        this.layoutUi();
+        await this.logPlayer.drain();
+        this.checkOutcome();
+        if (this.state.ended) {
+          return;
+        }
+
         endTurn(this.state);
         clampInventory(this.state.inventory);
         this.renderActions();
         this.renderState();
         this.layoutUi();
         await this.logPlayer.drain();
-        continue;
-      }
-
-      const canAct = this.announceActor(actor);
-      this.renderActions();
-      this.renderState();
-      this.layoutUi();
-      await this.logPlayer.drain();
-
-      if (!canAct) {
         this.refreshCommandAvailability();
         this.checkOutcome();
         if (this.state.ended) {
           return;
         }
-        endTurn(this.state);
-        clampInventory(this.state.inventory);
-        this.renderActions();
-        this.renderState();
-        this.layoutUi();
-        await this.logPlayer.drain();
-        this.refreshCommandAvailability();
-        this.checkOutcome();
-        if (this.state.ended) {
-          return;
-        }
-        continue;
       }
 
-      const isEnemy = this.state.sideEnemy.includes(actorId);
-      if (!isEnemy) {
-        this.refreshCommandAvailability();
-        this.checkOutcome();
-        return;
-      }
-
-      this.executeEnemyTurn(actor);
-      clampInventory(this.state.inventory);
-      this.renderActions();
-      this.renderState();
-      this.layoutUi();
-      await this.logPlayer.drain();
-      this.checkOutcome();
-      if (this.state.ended) {
-        return;
-      }
-
-      endTurn(this.state);
-      clampInventory(this.state.inventory);
-      this.renderActions();
-      this.renderState();
-      this.layoutUi();
-      await this.logPlayer.drain();
       this.refreshCommandAvailability();
       this.checkOutcome();
-      if (this.state.ended) {
-        return;
-      }
+    } finally {
+      this.busy = previousBusy;
+      this.refreshCommandAvailability();
     }
-
-    this.refreshCommandAvailability();
-    this.checkOutcome();
   }
 
   private executeEnemyTurn(actor: Actor) {
