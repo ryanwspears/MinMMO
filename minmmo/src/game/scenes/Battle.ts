@@ -356,9 +356,10 @@ export class Battle extends Phaser.Scene {
     });
     hitArea.on('pointerdown', () => {
       if (!this.targetSelectionActive) return;
-      if (!this.targetPickCallback) return;
       if (!this.targetCandidates.has(card.actorId)) return;
-      this.targetPickCallback(card.actorId);
+      const callback = this.targetPickCallback;
+      if (!callback) return;
+      callback(card.actorId);
     });
 
     return card;
@@ -1340,34 +1341,37 @@ export class Battle extends Phaser.Scene {
     if (!candidates.length) {
       return;
     }
+
     this.targetSelectionActive = true;
     this.targetCandidates.clear();
     for (const id of candidates) {
       this.targetCandidates.add(id);
     }
     this.targetPickCallback = onPick;
+
     const cancelButton = this.createTargetButton('cancel', 'Cancel');
     cancelButton.hitArea.on('pointerdown', () => {
       this.clearTargetPicker();
     });
     this.targetButtons.push(cancelButton);
+
     this.refreshCommandAvailability();
     this.renderState();
     this.layoutUi();
   }
 
   private clearTargetPicker() {
-    const wasActive = this.targetSelectionActive || this.targetButtons.length > 0 || this.targetCandidates.size > 0;
-    for (const entry of this.targetButtons) entry.container.destroy(true);
+    for (const entry of this.targetButtons) {
+      entry.container.destroy(true);
+    }
     this.targetButtons = [];
-    this.targetSelectionActive = false;
     this.targetCandidates.clear();
     this.targetPickCallback = undefined;
+    this.targetSelectionActive = false;
+
     this.refreshCommandAvailability();
-    if (wasActive) {
-      this.renderState();
-      this.layoutUi();
-    }
+    this.renderState();
+    this.layoutUi();
   }
 
   private handleResize(gameSize: Phaser.Structs.Size) {
