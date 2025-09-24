@@ -413,8 +413,6 @@ export class Battle extends Phaser.Scene {
       }
       card.state = state;
     }
-
-    this.applyActorCardState(card);
   }
 
   private applyActorCardState(card: ActorCardElements) {
@@ -2037,6 +2035,7 @@ export class Battle extends Phaser.Scene {
       this.actorCards[actor.id] = card;
     }
     this.layoutActorCard(card, rect, cardLayout);
+    const cardState = this.getCardStateForActor(actor);
 
     card.nameText.setText(actor.name);
     card.classText.setText(actor.clazz ?? 'Adventurer');
@@ -2054,28 +2053,26 @@ export class Battle extends Phaser.Scene {
       : 'None';
     card.statusText.setText(`Status: ${statuses}`);
 
-    const cardState = this.getCardStateForActor(actor);
     this.setActorCardState(card, cardState);
+    this.applyActorCardState(card);
 
     this.drawBars(card, actor.stats);
   }
 
   private getCardStateForActor(actor: Actor): ActorCardState {
-    const currentId = this.state.order[this.state.current];
-    const isCurrent = currentId === actor.id;
-    if (isCurrent && actor.alive) {
+    if (!actor.alive || this.state.ended) {
+      return 'disabled';
+    }
+
+    const order = this.state.order;
+    const currentIndex = Phaser.Math.Clamp(this.state.current, 0, order.length - 1);
+    const currentId = order[currentIndex];
+    if (currentId === actor.id) {
       return 'active';
     }
 
     if (this.targetSelectionActive) {
-      if (this.targetCandidates.has(actor.id)) {
-        return 'targetable';
-      }
-      return 'disabled';
-    }
-
-    if (!actor.alive || this.state.ended) {
-      return 'disabled';
+      return this.targetCandidates.has(actor.id) ? 'targetable' : 'disabled';
     }
 
     return 'idle';
