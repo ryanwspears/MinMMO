@@ -346,12 +346,12 @@ export class Battle extends Phaser.Scene {
       if (!this.targetSelectionActive) return;
       if (!this.targetCandidates.has(card.actorId)) return;
       card.hover = true;
-      this.applyActorCardState(card, card.state);
+      this.applyActorCardState(card);
     });
     hitArea.on('pointerout', () => {
       if (card.hover) {
         card.hover = false;
-        this.applyActorCardState(card, card.state);
+        this.applyActorCardState(card);
       }
     });
     hitArea.on('pointerdown', () => {
@@ -369,16 +369,13 @@ export class Battle extends Phaser.Scene {
     card.container.setSize(rect.width, rect.height);
     card.width = rect.width;
     card.height = rect.height;
-    const radius = 18;
-    card.cornerRadius = radius;
+    card.cornerRadius = 18;
 
     card.background.setPosition(0, 0);
     card.highlight.setPosition(0, 0);
     card.outline.setPosition(0, 0);
     card.overlay.setPosition(0, 0);
-    card.highlight.clear();
-    card.outline.clear();
-    card.overlay.clear();
+
     card.hitArea.setPosition(0, 0);
     card.hitArea.setSize(rect.width, rect.height);
     card.hitArea.setDisplaySize(rect.width, rect.height);
@@ -404,9 +401,12 @@ export class Battle extends Phaser.Scene {
       height: metrics.barHeight,
       spacing: metrics.barSpacing,
     };
+
+    card.highlight.clear();
+    card.overlay.clear();
   }
 
-  private applyActorCardState(card: ActorCardElements, state: ActorCardState) {
+  private setActorCardState(card: ActorCardElements, state: ActorCardState) {
     if (card.state !== state) {
       if (state !== 'targetable' && card.hover) {
         card.hover = false;
@@ -414,6 +414,11 @@ export class Battle extends Phaser.Scene {
       card.state = state;
     }
 
+    this.applyActorCardState(card);
+  }
+
+  private applyActorCardState(card: ActorCardElements) {
+    const state = card.state;
     const hovered = state === 'targetable' && card.hover;
     const width = Math.max(0, card.width);
     const height = Math.max(0, card.height);
@@ -2050,7 +2055,7 @@ export class Battle extends Phaser.Scene {
     card.statusText.setText(`Status: ${statuses}`);
 
     const cardState = this.getCardStateForActor(actor);
-    this.applyActorCardState(card, cardState);
+    this.setActorCardState(card, cardState);
 
     this.drawBars(card, actor.stats);
   }
