@@ -105,7 +105,7 @@ export class Overworld extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
-    this.updatePlayerMovement();
+    this.updatePlayerMovement(delta);
     this.updateMerchant(delta);
   }
 
@@ -239,7 +239,7 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  private updatePlayerMovement() {
+  private updatePlayerMovement(delta: number) {
     if (!this.player || !this.keys) return;
     let moveX = 0;
     let moveY = 0;
@@ -252,8 +252,9 @@ export class Overworld extends Phaser.Scene {
 
     if (moveX || moveY) {
       const length = Math.hypot(moveX, moveY) || 1;
-      const vx = (moveX / length) * PLAYER_SPEED;
-      const vy = (moveY / length) * PLAYER_SPEED;
+      const frameSpeed = PLAYER_SPEED * (delta / 1000);
+      const vx = (moveX / length) * frameSpeed;
+      const vy = (moveY / length) * frameSpeed;
       this.player.setVelocity(vx, vy);
     }
   }
