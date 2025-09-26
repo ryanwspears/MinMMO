@@ -1,4 +1,4 @@
-
+﻿
 import Phaser from 'phaser'
 import { Overworld } from '@game/scenes/Overworld'
 import { Battle } from '@game/scenes/Battle'
@@ -19,6 +19,10 @@ const gameConfig: Phaser.Types.Core.GameConfig = {
     width: window.innerWidth,
     height: window.innerHeight
   },
+  physics: {
+    default: 'matter',
+    matter: { gravity: { x: 0, y: 0 }, debug: false }
+  },
   scene: [Overworld, Battle]
 }
 
@@ -27,3 +31,5 @@ const game = new Phaser.Game(gameConfig)
 window.addEventListener('resize', () => {
   game.scale.resize(window.innerWidth, window.innerHeight)
 })
+
+

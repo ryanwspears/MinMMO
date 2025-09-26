@@ -1,543 +1,411 @@
-import Phaser from 'phaser';
-import { CONFIG } from '@config/store';
-import { Items, NPCs, Skills } from '@content/registry';
-import type { InventoryEntry } from '@engine/battle/types';
-import {
-  PlayerProfile,
-  WorldState,
-  MerchantState,
-  MerchantStockEntry,
-  getProfile,
-  setProfile,
-  getWorld,
-  setWorld,
-  resetSave,
-  clampInventory,
-} from '@game/save';
+﻿import Phaser from 'phaser';
 
-interface BattleInitData {
-  profile: PlayerProfile;
-  world: WorldState;
-  enemyId: string;
-  enemyLevel: number;
+const TILESET_PATH = 'assets/mapOne/tiles/';
+const TILESET_RESOURCES: Record<string, string> = {
+  test_grass_tiles: 'test_grass_tiles.png',
+  test_water_tiles: 'test_water_tiles.png',
+  test_cityGround_tiles: 'test_cityGround_tiles.png',
+  test_wall_tiles: 'test_wall_tiles.png',
+  test_buildings_tiles: 'test_buildings_tiles.png',
+  test_structures_tiles: 'test_structures_tiles.png',
+  test_road_tiles: 'test_road_tiles.png',
+  test_dirt_tiles: 'test_dirt_tiles.png',
+  test_plants_tiles: 'test_plants_tiles.png',
+  test_waterDecs_tiles: 'test_waterDecs_tiles.png',
+  test_rocks_tiles: 'test_rocks_tiles.png',
+};
+
+const BASE_LAYER_ORDER = [
+  'Ocean',
+  'Grass',
+  'Plants',
+  'Dirt',
+  'Rocks',
+  'Water',
+  'Road',
+  'CityGround',
+  'Spawns',
+];
+
+const COLLISION_LAYER_NAMES = [
+  'Walls',
+  'Houses',
+  'Shops',
+  'Structures',
+  'TreesBottom',
+  'Water',
+  'Ocean',
+];
+
+const TOP_LAYER_NAME = 'TreesTop';
+const PLAYER_TEXTURE_KEY = 'overworld-player';
+const PLAYER_DEPTH = 200;
+const COLLISION_LAYER_DEPTH = PLAYER_DEPTH - 20;
+const TOP_LAYER_DEPTH = 400;
+const MERCHANT_DEPTH = PLAYER_DEPTH + 1;
+const CITY_MARKER_DEPTH = PLAYER_DEPTH + 2;
+const PLAYER_SPEED = 110;
+const MERCHANT_SPEED = 120;
+const CAMERA_ZOOM = 1.3;
+
+type WASDKeys = Record<'W' | 'A' | 'S' | 'D', Phaser.Input.Keyboard.Key>;
+type TiledProperty = { name: string; value: unknown; type?: string };
+
+interface RouteState {
+  points: Phaser.Math.Vector2[];
+  index: number;
 }
-
-interface ReturnData {
-  summary?: string[];
-}
-
-const TEXT_COLOR = '#e6e8ef';
-const ACCENT_COLOR = '#7c5cff';
-const WARNING_COLOR = '#f08c8c';
 
 export class Overworld extends Phaser.Scene {
-  private profile?: PlayerProfile;
-  private world: WorldState;
-  private ui: Phaser.GameObjects.GameObject[] = [];
-  private summaryLines: string[] = [];
+  private map?: Phaser.Tilemaps.Tilemap;
+  private layers = new Map<string, Phaser.Tilemaps.TilemapLayer>();
+  private player?: Phaser.Physics.Matter.Sprite;
+  private keys?: WASDKeys;
+  private merchant?: Phaser.GameObjects.Ellipse;
+  private merchantRoute: RouteState = { points: [], index: 0 };
+  private enemySpawnAreas: Phaser.Math.Vector2[][] = [];
+  private ogreSpawnAreas: Phaser.Math.Vector2[][] = [];
+  private wraithSpawnAreas: Phaser.Math.Vector2[][] = [];
+  private cityMarkers: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super('Overworld');
-    this.world = getWorld();
   }
 
-  create(data?: ReturnData) {
-    this.profile = getProfile();
-    this.world = getWorld();
-    this.summaryLines = data?.summary ?? [];
-    this.cameras.resize(this.scale.width, this.scale.height);
-    this.scale.on('resize', this.handleResize, this);
-    this.events.once('shutdown', () => {
-      this.scale.off('resize', this.handleResize, this);
-    });
-    this.render();
+  preload() {
+    this.load.tilemapTiledJSON('mapOne', 'assets/mapOne/MapOne.json');
+    for (const [key, file] of Object.entries(TILESET_RESOURCES)) {
+      this.load.image(key, `${TILESET_PATH}${file}`);
+    }
   }
 
-  private clearUi() {
-    for (const obj of this.ui) obj.destroy();
-    this.ui = [];
+  create() {
+    this.matter.world.setGravity(0, 0);
+    this.matter.world.drawDebug = false;
+    if (this.matter.world.debugGraphic) {
+      this.matter.world.debugGraphic.clear();
+      this.matter.world.debugGraphic.visible = false;
+    }
+
+    this.ensureGeneratedTextures();
+    this.buildMap();
+    this.spawnPlayer();
+    this.buildMerchant();
+    this.renderCityMarkers();
+    this.captureSpawnLayers();
+
+    if (this.player && this.map) {
+      const { widthInPixels, heightInPixels } = this.map;
+      this.matter.world.setBounds(0, 0, widthInPixels, heightInPixels, 32, true, true, true, true);
+      this.cameras.main.setBounds(0, 0, widthInPixels, heightInPixels);
+      this.cameras.main.startFollow(this.player);
+      this.cameras.main.setLerp(0.2, 0.2);
+      this.cameras.main.setZoom(CAMERA_ZOOM);
+    }
   }
 
-  private render() {
-    this.clearUi();
-    const config = CONFIG();
-    const wrapWidth = Math.max(280, this.scale.width - 40);
-    let y = 20;
-    this.ui.push(this.add.text(20, y, 'MinMMO — Overworld', { color: TEXT_COLOR, fontSize: '20px' }));
-    y += 28;
-
-    if (this.summaryLines.length) {
-      this.ui.push(
-        this.add
-          .text(20, y, this.summaryLines.join('\n'), { color: ACCENT_COLOR, wordWrap: { width: wrapWidth } })
-          .setDepth(1),
-      );
-      y += 20 * this.summaryLines.length + 10;
-    }
-
-    if (!this.profile) {
-      this.renderClassSelection(y, config);
-      return;
-    }
-
-    y = this.renderProfilePanel(y, config);
-    this.renderActions(y);
+  update(_time: number, delta: number) {
+    this.updatePlayerMovement();
+    this.updateMerchant(delta);
   }
 
-  private renderClassSelection(startY: number, config = CONFIG()) {
-    let y = startY;
-    this.ui.push(this.add.text(20, y, 'Choose your class to begin:', { color: TEXT_COLOR }));
-    y += 24;
-    const classes = Object.entries(config.classes);
-    if (!classes.length) {
-      this.ui.push(this.add.text(20, y, 'No classes configured. Add one in the Admin.', { color: WARNING_COLOR }));
-      return;
+  private ensureGeneratedTextures() {
+    if (!this.textures.exists(PLAYER_TEXTURE_KEY)) {
+      const graphics = this.add.graphics({ x: 0, y: 0 });
+      graphics.setVisible(false);
+      graphics.fillStyle(0xf1f2f6, 1);
+      graphics.fillCircle(12, 12, 12);
+      graphics.lineStyle(2, 0x5a63ff, 1);
+      graphics.strokeCircle(12, 12, 12);
+      graphics.generateTexture(PLAYER_TEXTURE_KEY, 24, 24);
+      graphics.destroy();
     }
-    for (const [clazz, preset] of classes) {
-      const desc = `${clazz} — HP ${preset.maxHp} / STA ${preset.maxSta} / MP ${preset.maxMp}`;
-      const txt = this.add
-        .text(20, y, `[${clazz}] ${desc}`, { color: ACCENT_COLOR })
-        .setInteractive({ useHandCursor: true });
-      txt.on('pointerdown', () => {
-        this.createProfileForClass(clazz);
-      });
-      this.ui.push(txt);
-      y += 22;
-    }
-    const reset = this.add
-      .text(20, y + 10, '[Reset Save]', { color: WARNING_COLOR })
-      .setInteractive({ useHandCursor: true });
-    reset.on('pointerdown', () => {
-      resetSave();
-      this.profile = undefined;
-      this.world = getWorld();
-      this.summaryLines = ['Save reset.'];
-      this.render();
-    });
-    this.ui.push(reset);
   }
 
-  private renderProfilePanel(startY: number, config = CONFIG()) {
-    let y = startY;
-    const profile = this.profile!;
-    const slots = this.getMaxSkillSlots(profile.level, config.balance.SKILL_SLOTS_BY_LEVEL);
-    const infoLines = [
-      `${profile.name} the ${profile.clazz} — Lv ${profile.level}`,
-      `XP: ${profile.xp.toFixed(0)}  Gold: ${profile.gold.toFixed(0)}`,
-      `Stats: HP ${profile.stats.maxHp}  STA ${profile.stats.maxSta}  MP ${profile.stats.maxMp}  ATK ${profile.stats.atk}  DEF ${profile.stats.def}`,
-      `Equipped Skills (${profile.equippedSkills.length}/${slots}): ${profile.equippedSkills.join(', ') || 'None'}`,
-    ];
-    for (const line of infoLines) {
-      this.ui.push(this.add.text(20, y, line, { color: TEXT_COLOR }));
-      y += 20;
-    }
-
-    this.ui.push(this.add.text(20, y, 'Inventory:', { color: TEXT_COLOR }));
-    y += 20;
-    if (!profile.inventory.length) {
-      this.ui.push(this.add.text(32, y, '(Empty)', { color: '#8b8fa3' }));
-      y += 20;
-    } else {
-      for (const entry of profile.inventory) {
-        const item = Items()[entry.id];
-        const name = item?.name ?? entry.id;
-        this.ui.push(this.add.text(32, y, `${name} x${entry.qty}`, { color: '#8b8fa3' }));
-        y += 18;
-      }
-    }
-
-    this.ui.push(this.add.text(20, y, 'Unlocked Skills:', { color: TEXT_COLOR }));
-    y += 20;
-    if (!profile.unlockedSkills.length) {
-      this.ui.push(this.add.text(32, y, '(None)', { color: '#8b8fa3' }));
-      y += 20;
-    } else {
-      for (const id of profile.unlockedSkills) {
-        const skill = Skills()[id];
-        const equipped = profile.equippedSkills.includes(id);
-        const label = `${equipped ? '•' : '○'} ${skill?.name ?? id}`;
-        const txt = this.add
-          .text(32, y, label, { color: equipped ? ACCENT_COLOR : '#8b8fa3' })
-          .setInteractive({ useHandCursor: true });
-        txt.on('pointerdown', () => {
-          this.toggleSkillEquip(id, slots);
-        });
-        this.ui.push(txt);
-        y += 18;
-      }
-    }
-    y += 10;
-    return y;
-  }
-
-  private renderActions(startY: number) {
-    let y = startY;
-    const button = (label: string, color: string, handler: () => void) => {
-      const txt = this.add.text(20, y, label, { color }).setInteractive({ useHandCursor: true });
-      txt.on('pointerdown', handler);
-      this.ui.push(txt);
-      y += 24;
-    };
-
-    button('[Start Battle]', ACCENT_COLOR, () => this.showEncounterMenu());
-
-    const merchants = Object.values(NPCs()).filter((npc) => npc.kind === 'merchant');
-    for (const merchant of merchants) {
-      button(`[Visit ${merchant.name}]`, ACCENT_COLOR, () => this.openMerchant(merchant.id));
-    }
-
-    const trainers = Object.values(NPCs()).filter((npc) => npc.kind === 'trainer');
-    for (const trainer of trainers) {
-      button(`[Train with ${trainer.name}]`, ACCENT_COLOR, () => this.openTrainer(trainer.id));
-    }
-
-    button('[Reset Save]', WARNING_COLOR, () => {
-      resetSave();
-      this.profile = undefined;
-      this.world = getWorld();
-      this.summaryLines = ['Save reset.'];
-      this.render();
-    });
-  }
-
-  private handleResize(gameSize: Phaser.Structs.Size) {
-    const width = Math.max(1, gameSize.width ?? this.scale.width);
-    const height = Math.max(1, gameSize.height ?? this.scale.height);
-    this.cameras.resize(width, height);
-    this.render();
-  }
-
-  private toggleSkillEquip(skillId: string, slots: number) {
-    const profile = this.profile!;
-    const idx = profile.equippedSkills.indexOf(skillId);
-    if (idx >= 0) {
-      profile.equippedSkills.splice(idx, 1);
-    } else {
-      if (profile.equippedSkills.length >= slots) {
-        this.summaryLines = [`No free skill slots (max ${slots}).`];
-        this.render();
-        return;
-      }
-      profile.equippedSkills.push(skillId);
-    }
-    setProfile(profile);
-    this.summaryLines = [];
-    this.render();
-  }
-
-  private createProfileForClass(clazz: string) {
-    const config = CONFIG();
-    const preset = config.classes[clazz];
-    if (!preset) {
-      this.summaryLines = [`Class ${clazz} is not configured.`];
-      this.render();
-      return;
-    }
-    const skillIds = config.classSkills[clazz] ? [...config.classSkills[clazz]] : [];
-    const slots = this.getMaxSkillSlots(1, config.balance.SKILL_SLOTS_BY_LEVEL);
-    const equipped = skillIds.slice(0, slots);
-    const startItems = config.startItems[clazz] ? [...config.startItems[clazz]] : [];
-    const profile: PlayerProfile = {
-      name: 'Adventurer',
-      clazz,
-      level: 1,
-      xp: 0,
-      gold: 0,
-      stats: {
-        maxHp: preset.maxHp,
-        hp: preset.maxHp,
-        maxSta: preset.maxSta,
-        sta: preset.maxSta,
-        maxMp: preset.maxMp,
-        mp: preset.maxMp,
-        atk: preset.atk,
-        def: preset.def,
-        lv: 1,
-        xp: 0,
-        gold: 0,
-      },
-      unlockedSkills: skillIds,
-      equippedSkills: equipped,
-      inventory: startItems.map((entry) => ({ id: entry.id, qty: entry.qty ?? 1 })),
-    };
-    clampInventory(profile.inventory);
-    setProfile(profile);
-    this.profile = profile;
-    this.summaryLines = [`Welcome, ${profile.clazz}!`];
-    this.render();
-  }
-
-  private getMaxSkillSlots(level: number, slots: number[]): number {
-    const lvl = Math.max(1, level || 1);
-    if (!slots.length) return 0;
-    const index = Math.min(slots.length - 1, Math.max(0, lvl - 1));
-    return slots[index] ?? 0;
-  }
-
-  private showEncounterMenu() {
-    const profile = this.profile;
-    if (!profile) return;
-    const config = CONFIG();
-    const enemyEntries = Object.entries(config.enemies);
-    if (!enemyEntries.length) {
-      this.summaryLines = ['No enemies configured.'];
-      this.render();
-      return;
-    }
-    this.clearUi();
-    let y = 20;
-    this.ui.push(this.add.text(20, y, 'Choose an enemy:', { color: TEXT_COLOR }));
-    y += 26;
-    let selectedEnemy: string | null = null;
-    let level = Math.max(1, profile.level);
-    const levelText = this.add.text(20, 400, `Level: ${level}`, { color: TEXT_COLOR }).setInteractive({ useHandCursor: true });
-    levelText.on('pointerdown', () => {
-      level = Math.max(1, Math.min(99, level + 1));
-      levelText.setText(`Level: ${level}`);
-    });
-    this.ui.push(levelText);
-
-    const confirm = this.add
-      .text(200, 400, '[Start!]', { color: '#555b7a' })
-      .setInteractive({ useHandCursor: true });
-    confirm.on('pointerdown', () => {
-      if (!selectedEnemy) return;
-      this.launchBattle(selectedEnemy, level);
-    });
-    this.ui.push(confirm);
-
-    for (const [id, def] of enemyEntries) {
-      const txt = this.add
-        .text(20, y, `${def.name ?? id}`, { color: ACCENT_COLOR })
-        .setInteractive({ useHandCursor: true });
-      txt.on('pointerdown', () => {
-        selectedEnemy = id;
-        confirm.setColor(ACCENT_COLOR);
-      });
-      this.ui.push(txt);
-      y += 22;
-    }
-
-    const back = this.add.text(20, 440, '[Back]', { color: TEXT_COLOR }).setInteractive({ useHandCursor: true });
-    back.on('pointerdown', () => this.render());
-    this.ui.push(back);
-  }
-
-  private launchBattle(enemyId: string, level: number) {
-    const profile = this.profile;
-    if (!profile) return;
-    const battleData: BattleInitData = {
-      profile,
-      world: this.world,
-      enemyId,
-      enemyLevel: Math.max(1, Math.floor(level)),
-    };
-    this.scene.start('Battle', battleData);
-  }
-
-  private ensureMerchantState(npcId: string): MerchantState {
-    const economy = CONFIG().balance.ECONOMY;
-    if (!this.world.merchants[npcId]) {
-      this.world.merchants[npcId] = { stock: [], restockIn: 0 };
-    }
-    const state = this.world.merchants[npcId];
-    if (state.restockIn <= 0) {
-      const npc = NPCs()[npcId];
-      const stock: MerchantStockEntry[] = [];
-      if (npc?.inventory) {
-        for (const entry of npc.inventory) {
-          const qty = Number(entry.qty) || 1;
-          if (!entry.id || qty <= 0) continue;
-          const basePrice = this.resolveBasePrice(entry.price, entry.rarity);
-          stock.push({ id: entry.id, qty, basePrice });
+  private markCollidableTiles(map: Phaser.Tilemaps.Tilemap) {
+    for (const tileset of map.tilesets) {
+      const data = (tileset as any).tileData as Record<string, any> | undefined;
+      if (!data) continue;
+      for (const tile of Object.values(data)) {
+        if (!tile || typeof tile !== 'object') continue;
+        const collisionObjects = tile.objectgroup?.objects;
+        if (!collisionObjects || !collisionObjects.length) continue;
+        if (!Array.isArray(tile.properties)) {
+          tile.properties = [];
+        }
+        if (!tile.properties.some((prop: any) => prop?.name === 'collides')) {
+          tile.properties.push({ name: 'collides', type: 'bool', value: true });
         }
       }
-      state.stock = stock;
-      state.restockIn = Math.max(1, Math.floor(economy.restockTurns || 1));
-      setWorld(this.world);
     }
-    return state;
   }
-
-  private resolveBasePrice(price: number | undefined, rarity?: string) {
-    const economy = CONFIG().balance.ECONOMY;
-    if (typeof price === 'number' && Number.isFinite(price)) {
-      return Math.max(0, price);
-    }
-    const table = economy.priceByRarity ?? {};
-    if (rarity && typeof table[rarity as keyof typeof table] === 'number') {
-      return Math.max(0, table[rarity as keyof typeof table] || 0);
-    }
-    return Math.max(0, table.common || 0);
-  }
-
-  private openMerchant(npcId: string) {
-    const profile = this.profile;
-    if (!profile) return;
-    const economy = CONFIG().balance.ECONOMY;
-    const merchant = NPCs()[npcId];
-    const state = this.ensureMerchantState(npcId);
-    this.clearUi();
-    let y = 20;
-    this.ui.push(this.add.text(20, y, `${merchant?.name ?? 'Merchant'} — Shop`, { color: TEXT_COLOR }));
-    y += 26;
-    this.ui.push(this.add.text(20, y, `Gold: ${profile.gold.toFixed(0)}`, { color: ACCENT_COLOR }));
-    y += 24;
-    this.ui.push(this.add.text(20, y, 'Stock:', { color: TEXT_COLOR }));
-    y += 22;
-    if (!state.stock.length) {
-      this.ui.push(this.add.text(32, y, 'Sold out. Come back later.', { color: '#8b8fa3' }));
-      y += 22;
-    } else {
-      for (const entry of state.stock) {
-        const item = Items()[entry.id];
-        const name = item?.name ?? entry.id;
-        const price = Math.max(1, Math.round(entry.basePrice * (economy.buyMult || 1)));
-        const txt = this.add
-          .text(32, y, `${name} x${entry.qty} — ${price} gold`, { color: ACCENT_COLOR })
-          .setInteractive({ useHandCursor: true });
-        txt.on('pointerdown', () => {
-          if (entry.qty <= 0) return;
-          if (profile.gold < price) {
-            this.summaryLines = [`Not enough gold for ${name}.`];
-            this.render();
-            return;
-          }
-          entry.qty -= 1;
-          profile.gold -= price;
-          profile.stats.gold = profile.gold;
-          this.mergeInventory(profile.inventory, { id: entry.id, qty: 1 });
-          clampInventory(profile.inventory);
-          if (entry.qty <= 0) {
-            const idx = state.stock.indexOf(entry);
-            if (idx >= 0) state.stock.splice(idx, 1);
-          }
-          setProfile(profile);
-          setWorld(this.world);
-          this.openMerchant(npcId);
-        });
-        this.ui.push(txt);
-        y += 20;
+  private buildMap() {
+    this.normalizeTilesetData('mapOne');
+    const map = this.make.tilemap({ key: 'mapOne' });
+    const tilesets: Phaser.Tilemaps.Tileset[] = [];
+    for (const tileset of map.tilesets) {
+      const textureKey = this.resolveTilesetTextureKey(tileset);
+      if (!textureKey) {
+        continue;
+      }
+      const added = map.addTilesetImage(tileset.name || textureKey, textureKey);
+      if (added) {
+        tilesets.push(added);
       }
     }
+    this.map = map;
 
-    y += 10;
-    this.ui.push(this.add.text(20, y, 'Sell:', { color: TEXT_COLOR }));
-    y += 22;
-    if (!profile.inventory.length) {
-      this.ui.push(this.add.text(32, y, 'Nothing to sell.', { color: '#8b8fa3' }));
-      y += 22;
-    } else {
-      for (const entry of profile.inventory) {
-        const item = Items()[entry.id];
-        const name = item?.name ?? entry.id;
-        const basePrice = this.resolveBasePrice(
-          merchant?.inventory?.find((i) => i.id === entry.id)?.price,
-          merchant?.inventory?.find((i) => i.id === entry.id)?.rarity,
-        );
-        const price = Math.max(1, Math.round(basePrice * (economy.sellMult || 0.5)));
-        const txt = this.add
-          .text(32, y, `${name} x${entry.qty} — sell ${price} gold`, { color: '#8b8fa3' })
-          .setInteractive({ useHandCursor: true });
-        txt.on('pointerdown', () => {
-          if (entry.qty <= 0) return;
-          entry.qty -= 1;
-          profile.gold += price;
-          profile.stats.gold = profile.gold;
-          if (entry.qty <= 0) {
-            const idx = profile.inventory.indexOf(entry);
-            if (idx >= 0) profile.inventory.splice(idx, 1);
-          }
-          this.addMerchantStock(state.stock, entry.id, 1, basePrice);
-          setProfile(profile);
-          setWorld(this.world);
-          this.openMerchant(npcId);
-        });
-        this.ui.push(txt);
-        y += 20;
+    const depthStep = 10;
+    BASE_LAYER_ORDER.forEach((layerName, index) => {
+      const layer = map.createLayer(layerName, tilesets, 0, 0);
+      if (layer) {
+        layer.setDepth(index * depthStep);
+        this.layers.set(layerName, layer);
       }
+    });
+
+    for (const layerName of COLLISION_LAYER_NAMES) {
+      const existed = this.layers.has(layerName);
+      const layer = this.obtainLayer(map, tilesets, layerName);
+      if (!layer) {
+        continue;
+      }
+      if (!existed) {
+        layer.setDepth(COLLISION_LAYER_DEPTH);
+      }
+      layer.setCollisionFromCollisionGroup(true, true);
+      this.matter.world.convertTilemapLayer(layer, {
+        isStatic: true,
+        friction: 0,
+        restitution: 0,
+        label: `${layerName}-collider`,
+      });
     }
 
-    const back = this.add.text(20, 440, '[Back]', { color: TEXT_COLOR }).setInteractive({ useHandCursor: true });
-    back.on('pointerdown', () => this.render());
-    this.ui.push(back);
+    const topLayer = this.obtainLayer(map, tilesets, TOP_LAYER_NAME);
+    if (topLayer) {
+      topLayer.setDepth(TOP_LAYER_DEPTH);
+    }
   }
 
-  private openTrainer(npcId: string) {
-    const profile = this.profile;
-    if (!profile) return;
-    const trainer = NPCs()[npcId];
-    const economy = CONFIG().balance.ECONOMY;
-    if (trainer?.trainer?.clazz && trainer.trainer.clazz !== profile.clazz) {
-      this.summaryLines = [`${trainer.name} only trains ${trainer.trainer.clazz}.`];
-      this.render();
+  private resolveTilesetTextureKey(tileset: Phaser.Tilemaps.Tileset): string | undefined {
+    const name = tileset.name;
+    if (name && this.textures.exists(name)) {
+      return name;
+    }
+    if (name && TILESET_RESOURCES[name]) {
+      return name;
+    }
+    return Object.keys(TILESET_RESOURCES).find((key) => this.textures.exists(key));
+  }
+
+  private obtainLayer(
+    map: Phaser.Tilemaps.Tilemap,
+    tilesets: Phaser.Tilemaps.Tileset[],
+    layerName: string,
+  ): Phaser.Tilemaps.TilemapLayer | undefined {
+    const existing = this.layers.get(layerName);
+    if (existing) {
+      return existing;
+    }
+    const created = map.createLayer(layerName, tilesets, 0, 0);
+    if (created) {
+      this.layers.set(layerName, created);
+    }
+    return created ?? undefined;
+  }
+
+  private spawnPlayer() {
+    const spawn = this.resolvePlayerSpawnPoint();
+    const player = this.matter.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY, undefined, {
+      frictionAir: 0.35,
+      ignoreGravity: true,
+      label: 'player',
+    });
+    player.setDepth(PLAYER_DEPTH);
+    player.setCircle(10);
+    player.setFixedRotation();    player.setFriction(0, 0, 0);
+    player.setIgnoreGravity(true);
+    this.player = player;
+
+    const keyboard = this.input.keyboard;
+    if (keyboard) {
+      this.keys = keyboard.addKeys({
+        W: Phaser.Input.Keyboard.KeyCodes.W,
+        A: Phaser.Input.Keyboard.KeyCodes.A,
+        S: Phaser.Input.Keyboard.KeyCodes.S,
+        D: Phaser.Input.Keyboard.KeyCodes.D,
+      }) as WASDKeys;
+    }
+  }
+
+  private updatePlayerMovement() {
+    if (!this.player || !this.keys) return;
+    let moveX = 0;
+    let moveY = 0;
+    if (this.keys.W.isDown) moveY -= 1;
+    if (this.keys.S.isDown) moveY += 1;
+    if (this.keys.A.isDown) moveX -= 1;
+    if (this.keys.D.isDown) moveX += 1;
+
+    this.player.setVelocity(0, 0);
+
+    if (moveX || moveY) {
+      const length = Math.hypot(moveX, moveY) || 1;
+      const vx = (moveX / length) * PLAYER_SPEED;
+      const vy = (moveY / length) * PLAYER_SPEED;
+      this.player.setVelocity(vx, vy);
+    }
+  }
+
+  private buildMerchant() {
+    const routeLayer = this.map?.getObjectLayer('MerchantRoute');
+    if (!routeLayer || !routeLayer.objects?.length) {
       return;
     }
-    this.clearUi();
-    let y = 20;
-    this.ui.push(this.add.text(20, y, `${trainer?.name ?? 'Trainer'} — Skills`, { color: TEXT_COLOR }));
-    y += 26;
-    const teaches = trainer?.trainer?.teaches ?? [];
-    if (!teaches.length) {
-      this.ui.push(this.add.text(20, y, 'No skills available.', { color: '#8b8fa3' }));
-      y += 22;
-    } else {
-      for (const skillId of teaches) {
-        const skill = Skills()[skillId];
-        const base = trainer?.trainer?.priceBySkill?.[skillId];
-        const basePrice = this.resolveBasePrice(base, 'rare');
-        const price = Math.max(1, Math.round(basePrice * (economy.buyMult || 1)));
-        const owned = profile.unlockedSkills.includes(skillId);
-        const label = `${skill?.name ?? skillId} — ${owned ? 'Learned' : price + ' gold'}`;
-        const txt = this.add
-          .text(20, y, label, { color: owned ? '#8b8fa3' : ACCENT_COLOR })
-          .setInteractive({ useHandCursor: true });
-        txt.on('pointerdown', () => {
-          if (owned) return;
-          if (profile.gold < price) {
-            this.summaryLines = [`Not enough gold to learn ${skill?.name ?? skillId}.`];
-            this.render();
-            return;
-          }
-          profile.gold -= price;
-          profile.stats.gold = profile.gold;
-          profile.unlockedSkills.push(skillId);
-          setProfile(profile);
-          this.openTrainer(npcId);
-        });
-        this.ui.push(txt);
-        y += 22;
-      }
+
+    const routePoints = routeLayer.objects
+      .filter((obj) => obj.point)
+      .map((obj) => new Phaser.Math.Vector2(obj.x ?? 0, obj.y ?? 0));
+
+    if (!routePoints.length) {
+      return;
     }
 
-    const back = this.add.text(20, 440, '[Back]', { color: TEXT_COLOR }).setInteractive({ useHandCursor: true });
-    back.on('pointerdown', () => this.render());
-    this.ui.push(back);
+    this.merchantRoute = { points: routePoints, index: routePoints.length > 1 ? 1 : 0 };
+    const start = routePoints[0];
+    const merchant = this.add.ellipse(start.x, start.y, 18, 18, 0xffc857);
+    merchant.setStrokeStyle(2, 0x3d3d7a);
+    merchant.setDepth(MERCHANT_DEPTH);
+    this.merchant = merchant;
   }
 
-  private mergeInventory(inventory: InventoryEntry[], entry: InventoryEntry) {
-    if (!entry.id || !Number.isFinite(entry.qty)) return;
-    const existing = inventory.find((item) => item.id === entry.id);
-    if (existing) {
-      existing.qty += entry.qty;
+  private updateMerchant(delta: number) {
+    if (!this.merchant || this.merchantRoute.points.length === 0) {
+      return;
+    }
+
+    const target = this.merchantRoute.points[this.merchantRoute.index];
+    const step = MERCHANT_SPEED * (delta / 1000);
+    const distance = Phaser.Math.Distance.Between(this.merchant.x, this.merchant.y, target.x, target.y);
+
+    if (distance <= step) {
+      this.merchant.setPosition(target.x, target.y);
+      this.merchantRoute.index = (this.merchantRoute.index + 1) % this.merchantRoute.points.length;
     } else {
-      inventory.push({ id: entry.id, qty: entry.qty });
+      const angle = Phaser.Math.Angle.Between(this.merchant.x, this.merchant.y, target.x, target.y);
+      this.merchant.setPosition(
+        this.merchant.x + Math.cos(angle) * step,
+        this.merchant.y + Math.sin(angle) * step,
+      );
     }
   }
 
-  private addMerchantStock(stock: MerchantStockEntry[], id: string, qty: number, basePrice: number) {
-    if (!id || qty <= 0) return;
-    const existing = stock.find((entry) => entry.id === id);
-    if (existing) {
-      existing.qty += qty;
-      existing.basePrice = basePrice;
-    } else {
-      stock.push({ id, qty, basePrice });
+  private renderCityMarkers() {
+    const layer = this.map?.getObjectLayer('CityMarkers');
+    if (!layer || !layer.objects?.length) {
+      return;
     }
-    for (let i = stock.length - 1; i >= 0; i -= 1) {
-      if (stock[i].qty <= 0) {
-        stock.splice(i, 1);
+
+    for (const obj of layer.objects) {
+      const x = obj.x ?? 0;
+      const y = obj.y ?? 0;
+      const pin = this.add.triangle(x, y, 0, 18, 9, 0, 18, 18, 0x7c5cff);
+      pin.setDepth(CITY_MARKER_DEPTH);
+      pin.setOrigin(0.5, 1);
+      pin.setStrokeStyle(2, 0x2f2f52);
+      this.cityMarkers.push(pin);
+
+      const label = this.resolveObjectLabel(obj);
+      if (label) {
+        const text = this.add
+          .text(x, y - 22, label, {
+            fontSize: '12px',
+            color: '#e6e8ef',
+            strokeThickness: 2,
+            stroke: '#1b1d30',
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(CITY_MARKER_DEPTH + 1);
+        this.cityMarkers.push(text);
       }
     }
+  }
+
+  private resolveObjectLabel(obj: Phaser.Types.Tilemaps.TiledObject): string | undefined {
+    const direct = (obj.name || '').trim();
+    const propertyLabel = Array.isArray(obj.properties)
+      ? (obj.properties as TiledProperty[]).find((entry) => entry.name === 'label')
+      : undefined;
+    if (propertyLabel && typeof propertyLabel.value === 'string') {
+      const trimmed = propertyLabel.value.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+    return direct || undefined;
+  }
+
+  private captureSpawnLayers() {
+    this.enemySpawnAreas = this.extractPolygonLayer('EnemySpawnAreas');
+    this.ogreSpawnAreas = this.extractPolygonLayer('OgreSpawnArea');
+    this.wraithSpawnAreas = this.extractPolygonLayer('WraithSpawnArea');
+
+    this.registry.set('enemySpawnAreas', this.enemySpawnAreas);
+    this.registry.set('ogreSpawnAreas', this.ogreSpawnAreas);
+    this.registry.set('wraithSpawnAreas', this.wraithSpawnAreas);
+  }
+
+  private extractPolygonLayer(layerName: string): Phaser.Math.Vector2[][] {
+    const layer = this.map?.getObjectLayer(layerName);
+    if (!layer || !layer.objects) {
+      return [];
+    }
+    const polygons: Phaser.Math.Vector2[][] = [];
+    for (const obj of layer.objects) {
+      if (!obj.polygon || obj.polygon.length === 0) {
+        continue;
+      }
+      const baseX = obj.x ?? 0;
+      const baseY = obj.y ?? 0;
+      const points = obj.polygon.map((point) => new Phaser.Math.Vector2(baseX + point.x, baseY + point.y));
+      polygons.push(points);
+    }
+    return polygons;
+  }
+
+  private resolvePlayerSpawnPoint(): Phaser.Math.Vector2 {
+    const layer = this.map?.getObjectLayer('SpawnPoints');
+    if (!layer || !layer.objects || layer.objects.length === 0) {
+      const width = this.map?.widthInPixels ?? 0;
+      const height = this.map?.heightInPixels ?? 0;
+      return new Phaser.Math.Vector2(width * 0.5, height * 0.5);
+    }
+    const spawn = layer.objects.find((obj) => obj.point) ?? layer.objects[0];
+    return new Phaser.Math.Vector2(spawn.x ?? 0, spawn.y ?? 0);
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
