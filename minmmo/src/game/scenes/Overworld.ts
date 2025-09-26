@@ -122,6 +122,46 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
+  private normalizeTilesetData(cacheKey: string) {
+    const cachedMap = this.cache.tilemap.get(cacheKey);
+    const tilesets = cachedMap?.data?.tilesets;
+
+    if (!Array.isArray(tilesets)) {
+      return;
+    }
+
+    for (const entry of tilesets) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+
+      const tileset = entry as {
+        tileproperties?: Record<string, unknown>;
+        tileProperties?: unknown[];
+      } & Record<string, unknown>;
+
+      if (!tileset.tileproperties || typeof tileset.tileproperties !== 'object') {
+        tileset.tileproperties = {};
+      }
+
+      if (!Array.isArray(tileset.tileProperties)) {
+        const normalized: unknown[] = [];
+        for (const key of Object.keys(tileset.tileproperties)) {
+          const index = Number(key);
+          if (Number.isNaN(index)) {
+            continue;
+          }
+          normalized[index] = tileset.tileproperties[key];
+        }
+        tileset.tileProperties = normalized;
+      }
+
+      if (!Array.isArray(tileset.tileProperties)) {
+        tileset.tileProperties = [];
+      }
+    }
+  }
+
   private markCollidableTiles(map: Phaser.Tilemaps.Tilemap) {
     for (const tileset of map.tilesets) {
       const data = (tileset as any).tileData as Record<string, any> | undefined;
