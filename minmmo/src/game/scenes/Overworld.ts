@@ -37,16 +37,33 @@ const COLLISION_LAYER_DEPTH_OVERRIDES: Partial<Record<string, number>> = {
 };
 
 const PLAYER_TEXTURE_KEY = "overworld-player";
-const PLAYER_SPEED = 3;
-const CAMERA_ZOOM = 1.3;
+const PLAYER_SPEED = 2;
+const CAMERA_ZOOM = 2;
+
+const MINIMAP_MAX_SIZE = 400;
+const MINIMAP_MIN_SIZE = 300;
+const MINIMAP_MARGIN = 16;
+const MINIMAP_FRAME_PADDING = 12;
+const MINIMAP_BACKGROUND_COLOR = 0x050608;
+const MINIMAP_BACKGROUND_ALPHA = 0.6;
+const MINIMAP_OUTLINE_COLOR = 0xffffff;
+const MINIMAP_OUTLINE_ALPHA = 0.45;
+const MINIMAP_INDICATOR_RADIUS = 100;
+const MINIMAP_INDICATOR_COLOR = 0xFFBF00;
 
 type WASDKeys = Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
+
+type MinimapViewport = { x: number; y: number; width: number; height: number; zoom: number };
 
 export class Overworld extends Phaser.Scene {
   private map?: Phaser.Tilemaps.Tilemap;
   private layers = new Map<string, Phaser.Tilemaps.TilemapLayer>();
   private player?: Phaser.Physics.Matter.Sprite;
   private keys?: WASDKeys;
+  private minimapCamera?: Phaser.Cameras.Scene2D.Camera;
+  private minimapBackdrop?: Phaser.GameObjects.Rectangle;
+  private minimapMarker?: Phaser.GameObjects.Arc;
+  private minimapViewport?: MinimapViewport;
 
   constructor() {
     super("Overworld");
@@ -61,7 +78,7 @@ export class Overworld extends Phaser.Scene {
     this.matter.world.setGravity(0, 0);
 
     const mw = this.matter.world;
-    mw.drawDebug = true;
+    mw.drawDebug = false;
 
     if (mw.drawDebug && !mw.debugGraphic) {
       mw.createDebugGraphic();
@@ -80,15 +97,19 @@ export class Overworld extends Phaser.Scene {
     if (this.player && this.map) {
       const { widthInPixels, heightInPixels } = this.map;
       this.matter.world.setBounds(0, 0, widthInPixels, heightInPixels, 32, true, true, true, true);
-      this.cameras.main.setBounds(0, 0, widthInPixels, heightInPixels);
-      this.cameras.main.startFollow(this.player);
-      this.cameras.main.setLerp(0.2, 0.2);
-      this.cameras.main.setZoom(CAMERA_ZOOM);
+      const camera = this.cameras.main;
+      camera.setBounds(0, 0, widthInPixels, heightInPixels);
+      camera.startFollow(this.player, true, 1, 1);
+      camera.setRoundPixels(true);
+      const integerZoom = Math.max(1, Math.round(CAMERA_ZOOM));
+      camera.setZoom(integerZoom);
+      this.createMinimap();
     }
   }
 
   update(_time: number, _delta: number) {
     this.updatePlayerMovement();
+    this.updateMinimapIndicator();
   }
 
   private ensureGeneratedTextures() {
@@ -256,6 +277,174 @@ export class Overworld extends Phaser.Scene {
     const vy = (moveY / length) * PLAYER_SPEED;
 
     this.player.setVelocity(vx, vy);
+  }
+
+
+  private createMinimap() {
+    if (!this.map) {
+      return;
+    }
+
+    const mainCamera = this.cameras.main;
+    const viewport = this.computeMinimapViewport(mainCamera.width, mainCamera.height);
+
+    if (!viewport) {
+      return;
+    }
+
+    const minimap = this.cameras.add(viewport.x, viewport.y, viewport.width, viewport.height);
+    minimap.setName("minimap");
+    minimap.setRoundPixels(true);
+    minimap.setZoom(viewport.zoom);
+    minimap.centerOn(this.map.widthInPixels * 0.5, this.map.heightInPixels * 0.5);
+    minimap.setBackgroundColor(MINIMAP_BACKGROUND_COLOR);
+
+    const backdrop = this.add.rectangle(0, 0, 10, 10, MINIMAP_BACKGROUND_COLOR, MINIMAP_BACKGROUND_ALPHA);
+    backdrop.setOrigin(0.5, 0.5);
+    backdrop.setScrollFactor(0);
+    backdrop.setDepth(9998);
+    backdrop.setStrokeStyle(1, MINIMAP_OUTLINE_COLOR, MINIMAP_OUTLINE_ALPHA);
+
+    const marker = this.add.circle(this.player?.x ?? 0, this.player?.y ?? 0, MINIMAP_INDICATOR_RADIUS, MINIMAP_INDICATOR_COLOR);
+    marker.setAlpha(0.9);
+    marker.setDepth(PLAYER_DEPTH + 50);
+    marker.setScrollFactor(1);
+    marker.setVisible(false);
+    marker.setStrokeStyle(3, MINIMAP_OUTLINE_COLOR, 0.8);
+
+    const ignoredByMinimap: Phaser.GameObjects.GameObject[] = [backdrop];
+    if (this.matter.world.debugGraphic) {
+      ignoredByMinimap.push(this.matter.world.debugGraphic);
+    }
+    if (this.player) {
+      ignoredByMinimap.push(this.player);
+    }
+    minimap.ignore(ignoredByMinimap);
+    this.cameras.main.ignore(marker);
+
+    this.minimapCamera = minimap;
+    this.minimapBackdrop = backdrop;
+    this.minimapMarker = marker;
+
+    this.positionMinimap();
+    this.updateMinimapIndicator();
+
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleScaleResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMinimap, this);
+  }
+
+  private positionMinimap(sceneWidth?: number, sceneHeight?: number) {
+    if (!this.minimapCamera || !this.map) {
+      return;
+    }
+
+    const width = sceneWidth ?? this.cameras.main.width;
+    const height = sceneHeight ?? this.cameras.main.height;
+    const viewport = this.computeMinimapViewport(width, height);
+
+    if (!viewport) {
+      this.minimapViewport = undefined;
+      this.minimapCamera.setVisible(false);
+      this.minimapBackdrop?.setVisible(false);
+      this.minimapMarker?.setVisible(false);
+      return;
+    }
+
+    this.minimapViewport = viewport;
+    this.minimapCamera.setVisible(true);
+    this.minimapCamera.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    this.minimapCamera.setZoom(viewport.zoom);
+    this.minimapCamera.centerOn(this.map.widthInPixels * 0.5, this.map.heightInPixels * 0.5);
+
+    const frameWidth = viewport.width + MINIMAP_FRAME_PADDING;
+    const frameHeight = viewport.height + MINIMAP_FRAME_PADDING;
+
+    if (this.minimapBackdrop) {
+      this.minimapBackdrop.setVisible(true);
+      this.minimapBackdrop.setPosition(viewport.x + viewport.width * 0.5, viewport.y + viewport.height * 0.5);
+      this.minimapBackdrop.setDisplaySize(frameWidth, frameHeight);
+    }
+
+    if (this.minimapMarker) {
+      this.minimapMarker.setVisible(true);
+    }
+
+    this.updateMinimapIndicator();
+  }
+
+  private computeMinimapViewport(sceneWidth: number, sceneHeight: number): MinimapViewport | undefined {
+    if (!this.map) {
+      return undefined;
+    }
+
+    const availableWidth = Math.max(sceneWidth - MINIMAP_MARGIN * 2, 0);
+    const availableHeight = Math.max(sceneHeight - MINIMAP_MARGIN * 2, 0);
+
+    if (availableWidth < 48 || availableHeight < 48) {
+      return undefined;
+    }
+
+    const mapWidth = Math.max(this.map.widthInPixels, 1);
+    const mapHeight = Math.max(this.map.heightInPixels, 1);
+    const mapRatio = mapWidth / mapHeight;
+
+    const targetWidth = Phaser.Math.Clamp(sceneWidth * 0.25, MINIMAP_MIN_SIZE, MINIMAP_MAX_SIZE);
+    const targetHeight = Phaser.Math.Clamp(sceneHeight * 0.25, MINIMAP_MIN_SIZE, MINIMAP_MAX_SIZE);
+
+    let width = Math.min(targetWidth, availableWidth);
+    let height = width / mapRatio;
+
+    const maxHeight = Math.min(targetHeight, availableHeight);
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = height * mapRatio;
+    }
+
+    width = Math.round(Phaser.Math.Clamp(width, 48, availableWidth));
+    height = Math.round(Phaser.Math.Clamp(height, 48, availableHeight));
+
+    const zoomX = width / mapWidth;
+    const zoomY = height / mapHeight;
+    const zoom = Math.min(zoomX, zoomY);
+
+    if (!Number.isFinite(zoom) || zoom <= 0) {
+      return undefined;
+    }
+
+    const x = sceneWidth - width - MINIMAP_MARGIN;
+    const y = MINIMAP_MARGIN;
+
+    return { x, y, width, height, zoom };
+  }
+
+  private handleScaleResize(gameSize: Phaser.Structs.Size) {
+    this.positionMinimap(gameSize.width, gameSize.height);
+  }
+
+  private updateMinimapIndicator() {
+    if (!this.player || !this.minimapMarker) {
+      return;
+    }
+
+    this.minimapMarker.setPosition(this.player.x, this.player.y);
+  }
+
+  private cleanupMinimap() {
+    this.scale.off(Phaser.Scale.Events.RESIZE, this.handleScaleResize, this);
+
+    if (this.minimapCamera) {
+      this.cameras.remove(this.minimapCamera, true);
+      this.minimapCamera = undefined;
+    }
+
+    this.minimapBackdrop?.destroy();
+    this.minimapBackdrop = undefined;
+
+    if (this.minimapMarker) {
+      this.minimapMarker.destroy();
+      this.minimapMarker = undefined;
+    }
+    this.minimapViewport = undefined;
   }
 
   private resolvePlayerSpawnPoint(): Phaser.Math.Vector2 {

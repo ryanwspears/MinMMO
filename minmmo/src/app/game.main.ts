@@ -19,10 +19,12 @@ const gameConfig: Phaser.Types.Core.GameConfig = {
     width: window.innerWidth,
     height: window.innerHeight
   },
+  fps: {target: 120, min: 30},
   physics: {
     default: 'matter',
-    matter: { gravity: { x: 0, y: 0 }, debug: { showBody:true, showStaticBody:true, showInternalEdges:true } }
+    matter: { gravity: { x: 0, y: 0 }/*, debug: { showBody:true, showStaticBody:true, showInternalEdges:true}*/ }
   },
+  render: {powerPreference: 'high-performance', pixelArt: true, antialias: false, roundPixels: true},
   scene: [Overworld, Battle]
 }
 
