@@ -329,6 +329,9 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
+    const world = getActiveWorld();
+    const defeated = new Set(world?.defeatedSpawnZones ?? []);
+
     for (const [layerName, kind] of Object.entries(ENCOUNTER_LAYER_MAP)) {
       const layer = this.map.getObjectLayer(layerName);
       if (!layer || !Array.isArray(layer.objects)) {
@@ -341,7 +344,12 @@ export class Overworld extends Phaser.Scene {
           continue;
         }
 
-        const id = `${layerName}-${object.id ?? this.spawnZones.length}`;
+        const rawId =
+          object.id ?? object.name ?? `${Math.round(object.x ?? 0)}-${Math.round(object.y ?? 0)}`;
+        const id = `${layerName}-${rawId}`;
+        if (defeated.has(id)) {
+          continue;
+        }
         this.spawnZones.push({ id, kind, polygon });
       }
     }
@@ -593,6 +601,7 @@ export class Overworld extends Phaser.Scene {
       world,
       enemyId: config.enemyId,
       enemyLevel: config.enemyLevel,
+      spawnZoneId: zone.id,
     });
   }
 

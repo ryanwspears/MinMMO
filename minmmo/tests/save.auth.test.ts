@@ -34,6 +34,7 @@ function buildWorld(): WorldState {
     merchants: {},
     flags: {},
     turn: 0,
+    defeatedSpawnZones: [],
   };
 }
 
