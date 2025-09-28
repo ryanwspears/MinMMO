@@ -124,6 +124,12 @@ type WASDKeys = Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
 type MinimapViewport = { x: number; y: number; width: number; height: number; zoom: number };
 
+const OVERWORLD_EVENT_ACTIVE = "overworld:active";
+const OVERWORLD_EVENT_PAUSE_CHANGED = "overworld:pause-changed";
+const OVERWORLD_EVENT_RESUME_REQUEST = "overworld:resume-request";
+const OVERWORLD_EVENT_SAVE_REQUEST = "overworld:save-request";
+const OVERWORLD_EVENT_SAVE_COMPLETE = "overworld:save-complete";
+
 interface OverworldInitData {
   summary?: string[];
   outcome?: "victory" | "defeat" | "fled";
@@ -146,6 +152,8 @@ export class Overworld extends Phaser.Scene {
   private encounterActive = false;
   private matterCollisionAttached = false;
   private initData?: OverworldInitData;
+  private pauseKey?: Phaser.Input.Keyboard.Key;
+  private isPaused = false;
 
   constructor() {
     super("Overworld");
@@ -180,6 +188,9 @@ export class Overworld extends Phaser.Scene {
     this.buildMap();
     this.spawnPlayer();
     this.initializeEncounterSystem();
+    this.setupPauseControls();
+    this.bindGlobalEvents();
+    this.notifyOverworldActive(true);
 
     if (this.player && this.map) {
       const { widthInPixels, heightInPixels } = this.map;
@@ -195,6 +206,16 @@ export class Overworld extends Phaser.Scene {
   }
 
   update(_time: number, _delta: number) {
+    this.pollPauseToggle();
+
+    if (this.isPaused) {
+      if (this.player) {
+        this.player.setVelocity(0, 0);
+      }
+      this.updateMinimapIndicator();
+      return;
+    }
+
     this.updatePlayerMovement();
     this.updateMinimapIndicator();
   }
@@ -668,6 +689,101 @@ export class Overworld extends Phaser.Scene {
         D: Phaser.Input.Keyboard.KeyCodes.D,
       }) as WASDKeys;
     }
+  }
+
+  private setupPauseControls() {
+    const keyboard = this.input.keyboard;
+    if (!keyboard) {
+      return;
+    }
+    this.pauseKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    keyboard.addCapture(Phaser.Input.Keyboard.KeyCodes.ESC);
+  }
+
+  private cleanupPauseControls() {
+    if (this.pauseKey) {
+      this.pauseKey.destroy();
+      this.pauseKey = undefined;
+    }
+    this.input.keyboard?.removeCapture(Phaser.Input.Keyboard.KeyCodes.ESC);
+  }
+
+  private pollPauseToggle() {
+    if (!this.pauseKey) {
+      return;
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
+      this.setPaused(!this.isPaused);
+    }
+  }
+
+  private setPaused(paused: boolean) {
+    if (this.isPaused === paused) {
+      return;
+    }
+
+    this.isPaused = paused;
+
+    if (paused) {
+      this.matter.world.pause();
+      if (this.player) {
+        this.player.setVelocity(0, 0);
+      }
+    } else {
+      this.matter.world.resume();
+    }
+
+    this.game.events.emit(OVERWORLD_EVENT_PAUSE_CHANGED, paused);
+  }
+
+  private handleResumeRequest() {
+    this.setPaused(false);
+  }
+
+  private handleSaveRequest() {
+    const profile = getActiveProfile();
+    if (!profile) {
+      this.game.events.emit(OVERWORLD_EVENT_SAVE_COMPLETE, {
+        success: false,
+        message: "No active character selected.",
+      });
+      return;
+    }
+
+    const world = getActiveWorld() ?? createDefaultWorld();
+
+    if (this.player) {
+      world.lastOverworldPosition = { x: this.player.x, y: this.player.y };
+    }
+
+    saveActiveCharacter(profile, world);
+
+    this.game.events.emit(OVERWORLD_EVENT_SAVE_COMPLETE, {
+      success: true,
+      message: "Game saved.",
+    });
+  }
+
+  private bindGlobalEvents() {
+    const events = this.game.events;
+    events.on(OVERWORLD_EVENT_RESUME_REQUEST, this.handleResumeRequest, this);
+    events.on(OVERWORLD_EVENT_SAVE_REQUEST, this.handleSaveRequest, this);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      events.off(OVERWORLD_EVENT_RESUME_REQUEST, this.handleResumeRequest, this);
+      events.off(OVERWORLD_EVENT_SAVE_REQUEST, this.handleSaveRequest, this);
+      if (this.isPaused) {
+        this.setPaused(false);
+      }
+      this.notifyOverworldActive(false);
+      this.cleanupPauseControls();
+    });
+
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupPauseControls, this);
+  }
+
+  private notifyOverworldActive(active: boolean) {
+    this.game.events.emit(OVERWORLD_EVENT_ACTIVE, active);
   }
 
   private updatePlayerMovement() {

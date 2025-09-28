@@ -293,7 +293,7 @@ function sanitizeWorld(input: any): WorldState {
             input.defeatedSpawnZones
               .filter((id: unknown): id is string => typeof id === 'string')
               .map((id: string) => id.trim())
-              .filter((id) => id.length > 0),
+              .filter((id: string) => id.length > 0),
           ),
         )
       : [],

@@ -6,6 +6,7 @@ import { rebuildFromConfig } from '@content/registry';
 import { Battle } from '@game/scenes/Battle';
 import { Overworld } from '@game/scenes/Overworld';
 import AuthApp from './auth/AuthApp';
+import { PauseMenu } from './game/PauseMenu';
 import {
   ActiveSelection,
   getActiveProfile,
@@ -22,6 +23,9 @@ type GameSelection = ActiveSelection;
 function GameShell() {
   const [selection, setSelection] = useState<GameSelection>(() => getActiveSelection());
   const [isGameRunning, setIsGameRunning] = useState<boolean>(() => Boolean(selection.accountId && selection.characterId));
+  const [isOverworldActive, setIsOverworldActive] = useState(false);
+  const [isOverworldPaused, setIsOverworldPaused] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<{ message: string; tone: 'info' | 'success' | 'error' } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
 
@@ -48,6 +52,9 @@ function GameShell() {
       gameRef.current.destroy(true);
       gameRef.current = null;
     }
+    setIsOverworldActive(false);
+    setIsOverworldPaused(false);
+    setSaveStatus(null);
   }, []);
 
   const shouldRunGame = isGameRunning && Boolean(selection.characterId);
@@ -85,6 +92,37 @@ function GameShell() {
     const game = new Phaser.Game(gameConfig);
     gameRef.current = game;
 
+    const handleOverworldActive = (active: boolean) => {
+      setIsOverworldActive(active);
+      if (!active) {
+        setIsOverworldPaused(false);
+        setSaveStatus(null);
+      }
+    };
+
+    const handlePauseChanged = (paused: boolean) => {
+      setIsOverworldPaused(paused);
+      if (!paused) {
+        setSaveStatus(null);
+      }
+    };
+
+    const handleSaveComplete = (payload: { success?: boolean; message?: string } | undefined) => {
+      if (!payload) {
+        setSaveStatus({ message: 'Unable to save game.', tone: 'error' });
+        return;
+      }
+      if (payload.success) {
+        setSaveStatus({ message: payload.message ?? 'Game saved.', tone: 'success' });
+      } else {
+        setSaveStatus({ message: payload.message ?? 'Unable to save game.', tone: 'error' });
+      }
+    };
+
+    game.events.on('overworld:active', handleOverworldActive);
+    game.events.on('overworld:pause-changed', handlePauseChanged);
+    game.events.on('overworld:save-complete', handleSaveComplete);
+
     const handleResize = () => {
       if (!gameRef.current || !containerRef.current) return;
       const { clientWidth, clientHeight } = containerRef.current;
@@ -95,6 +133,9 @@ function GameShell() {
 
     window.addEventListener('resize', handleResize);
     return () => {
+      game.events.off('overworld:active', handleOverworldActive);
+      game.events.off('overworld:pause-changed', handlePauseChanged);
+      game.events.off('overworld:save-complete', handleSaveComplete);
       window.removeEventListener('resize', handleResize);
       game.destroy(true);
       gameRef.current = null;
@@ -106,6 +147,16 @@ function GameShell() {
     destroyGame();
     setSelection(getActiveSelection());
   }, [destroyGame]);
+
+  const handleResumeGame = useCallback(() => {
+    setSaveStatus(null);
+    gameRef.current?.events.emit('overworld:resume-request');
+  }, []);
+
+  const handleSaveGame = useCallback(() => {
+    setSaveStatus({ message: 'Saving...', tone: 'info' });
+    gameRef.current?.events.emit('overworld:save-request');
+  }, []);
 
   if (!shouldRunGame) {
     return (
@@ -123,17 +174,27 @@ function GameShell() {
 
   return (
     <div className="game-layout">
-      <aside className="auth-panel">
-        <AuthApp
-          selection={selection}
-          isGameRunning={isGameRunning}
-          onSelectionChange={refreshSelection}
-          onStartGame={startGame}
-          onLogout={handleLogout}
-        />
-      </aside>
+      {!isOverworldActive && (
+        <aside className="auth-panel">
+          <AuthApp
+            selection={selection}
+            isGameRunning={isGameRunning}
+            onSelectionChange={refreshSelection}
+            onStartGame={startGame}
+            onLogout={handleLogout}
+          />
+        </aside>
+      )}
       <main className="game-stage">
         <div ref={containerRef} className="phaser-host" />
+        <PauseMenu
+          visible={isOverworldPaused}
+          onResume={handleResumeGame}
+          onSave={handleSaveGame}
+          onLogout={handleLogout}
+          statusMessage={saveStatus?.message}
+          statusTone={saveStatus?.tone}
+        />
       </main>
     </div>
   );

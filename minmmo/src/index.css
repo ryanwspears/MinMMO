@@ -59,6 +59,75 @@ body {
   flex: 1;
 }
 
+.pause-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 18, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  backdrop-filter: blur(2px);
+}
+
+.pause-menu {
+  background: #141830;
+  border: 1px solid #20264a;
+  border-radius: 18px;
+  padding: 28px 32px;
+  width: min(360px, 100%);
+  box-shadow: 0 28px 80px rgba(6, 8, 16, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  text-align: center;
+}
+
+.pause-menu h2 {
+  margin: 0 0 4px;
+}
+
+.pause-menu__subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.pause-menu__status {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pause-menu__status--success {
+  color: #71d675;
+}
+
+.pause-menu__status--error {
+  color: #ff6b6b;
+}
+
+.pause-menu__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pause-menu__actions button {
+  width: 100%;
+  justify-content: center;
+}
+
+.pause-menu__actions .ghost {
+  border-color: #303769;
+}
+
+.pause-menu__actions .ghost.danger {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
 .game-placeholder {
   position: absolute;
   top: 50%;
