@@ -1,12 +1,202 @@
+:root {
+  --bg: #0f1220;
+  --fg: #e6e8ef;
+  --muted: #8b8fa3;
+  --accent: #7c5cff;
+  --panel: #141830;
+}
 
-:root { --bg: #0f1220; --fg: #e6e8ef; --muted: #8b8fa3; --accent: #7c5cff; }
-html, body { height: 100%; margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: var(--fg); background: var(--bg); }
-#game-root { width: 100vw; height: 100vh; }
-canvas { display: block; }
-button { background: var(--accent); border: 0; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
-input, select, textarea { background: #1a1f3a; border: 1px solid #2a3160; color: var(--fg); padding: 6px 8px; border-radius: 6px; }
-.card { background: #141830; border: 1px solid #20264a; border-radius: 12px; padding: 16px; }
-h1,h2,h3 { margin: 0.5rem 0; }
-.small { color: var(--muted); font-size: 12px; }
-.row { display:flex; gap:12px; align-items:center; }
-.grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); }
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+#root {
+  height: 100%;
+}
+
+.game-layout {
+  display: flex;
+  height: 100%;
+}
+
+.auth-panel {
+  width: min(420px, 100%);
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-right: 1px solid #20264a;
+}
+
+.game-stage {
+  flex: 1;
+  position: relative;
+  background: radial-gradient(circle at top, #171c3a, #050812 70%);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.phaser-host {
+  flex: 1;
+}
+
+.game-placeholder {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 24, 48, 0.88);
+  border: 1px solid #20264a;
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 320px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(6, 8, 16, 0.6);
+}
+
+canvas {
+  display: block;
+}
+
+button {
+  background: var(--accent);
+  border: 0;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid #2a3160;
+  color: var(--fg);
+}
+
+input,
+select,
+textarea {
+  background: #1a1f3a;
+  border: 1px solid #2a3160;
+  color: var(--fg);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.card {
+  background: #141830;
+  border: 1px solid #20264a;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0.5rem 0;
+}
+
+.small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.auth-app {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #141830;
+  border: 1px solid #20264a;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.error {
+  color: #ff7675;
+  font-size: 13px;
+}
+
+.character-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.character-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-radius: 10px;
+  background: #1a1f3a;
+  border: 1px solid #2a3160;
+}
+
+.account-list {
+  background: #141830;
+  border: 1px solid #20264a;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.account-list ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-list li button {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.account-list li.active button {
+  background: rgba(124, 92, 255, 0.25);
+}

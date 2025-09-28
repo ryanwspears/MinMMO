@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { getProfile, getWorld } from "@game/save";
+import { createDefaultWorld, getActiveProfile, getActiveWorld } from "@game/save";
 
 const MAP_KEY = "mapOne";
 const MAP_JSON_PATH = "assets/mapOne/MapOne.json";
@@ -552,13 +552,13 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
-    const profile = getProfile();
+    const profile = getActiveProfile();
     if (!profile) {
       console.warn("Encounter triggered without an active player profile.");
       return;
     }
 
-    const world = getWorld();
+    const world = getActiveWorld() ?? createDefaultWorld();
 
     this.encounterActive = true;
     this.detachEncounterCollisionHandler();

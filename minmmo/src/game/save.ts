@@ -30,16 +30,59 @@ export interface WorldState {
   lastLocation?: string;
 }
 
-export interface SaveData {
-  profile?: PlayerProfile;
+export interface CharacterRecord {
+  id: string;
+  profile: PlayerProfile;
   world: WorldState;
+  createdAt: number;
+  updatedAt: number;
+  lastSelectedAt?: number;
+}
+
+export interface AccountRecord {
+  id: string;
+  passwordHash?: string;
+  characters: Record<string, CharacterRecord>;
+  activeCharacterId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SaveData {
+  version: number;
+  accounts: Record<string, AccountRecord>;
+  activeAccountId?: string;
+}
+
+export interface AccountSummary {
+  id: string;
+  characterCount: number;
+  activeCharacterId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ActiveSelection {
+  accountId?: string;
+  characterId?: string;
 }
 
 const SAVE_KEY = 'minmmo:save';
+const CURRENT_VERSION = 2;
+const LEGACY_ACCOUNT_ID = 'solo';
+const LEGACY_CHARACTER_ID = 'solo-hero';
 const storage: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage;
 
 function defaultWorld(): WorldState {
   return { merchants: {}, flags: {}, turn: 0 };
+}
+
+export function createDefaultWorld(): WorldState {
+  return defaultWorld();
+}
+
+function defaultSave(): SaveData {
+  return { version: CURRENT_VERSION, accounts: {} };
 }
 
 function deepClone<T>(value: T): T {
@@ -56,7 +99,7 @@ function deepClone<T>(value: T): T {
   return value;
 }
 
-let cache: SaveData = { profile: undefined, world: defaultWorld() };
+let cache: SaveData = defaultSave();
 
 (function init() {
   if (!storage) {
@@ -70,15 +113,111 @@ let cache: SaveData = { profile: undefined, world: defaultWorld() };
     const parsed = JSON.parse(raw);
     cache = normalizeSave(parsed);
   } catch {
-    cache = { profile: undefined, world: defaultWorld() };
+    cache = defaultSave();
   }
 })();
 
 function normalizeSave(input: any): SaveData {
-  const world = input && typeof input.world === 'object' ? input.world : {};
+  if (input && typeof input === 'object' && input.accounts && typeof input.accounts === 'object') {
+    return sanitizeAccountsSave(input);
+  }
+  return migrateLegacySave(input);
+}
+
+function sanitizeAccountsSave(input: any): SaveData {
+  const accountsInput = input.accounts ?? {};
+  const accounts: Record<string, AccountRecord> = {};
+  for (const [rawId, account] of Object.entries(accountsInput as Record<string, any>)) {
+    const id = String(rawId ?? '').trim();
+    if (!id) continue;
+    const sanitized = sanitizeAccount(id, account);
+    accounts[sanitized.id] = sanitized;
+  }
+
+  let activeAccountId: string | undefined;
+  if (typeof input?.activeAccountId === 'string' && accounts[input.activeAccountId]) {
+    activeAccountId = input.activeAccountId;
+  }
+
   return {
-    profile: input && typeof input.profile === 'object' ? sanitizeProfile(input.profile) : undefined,
-    world: sanitizeWorld(world),
+    version: Number.isFinite(input?.version) ? Number(input.version) : CURRENT_VERSION,
+    accounts,
+    activeAccountId,
+  };
+}
+
+function migrateLegacySave(input: any): SaveData {
+  const profile = input && typeof input.profile === 'object' ? sanitizeProfile(input.profile) : undefined;
+  const world = sanitizeWorld(input && typeof input.world === 'object' ? input.world : {});
+  if (!profile) {
+    return defaultSave();
+  }
+
+  const character: CharacterRecord = {
+    id: LEGACY_CHARACTER_ID,
+    profile,
+    world,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const account: AccountRecord = {
+    id: LEGACY_ACCOUNT_ID,
+    passwordHash: undefined,
+    characters: { [character.id]: character },
+    activeCharacterId: character.id,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  return {
+    version: CURRENT_VERSION,
+    accounts: { [account.id]: account },
+    activeAccountId: account.id,
+  };
+}
+
+function sanitizeAccount(id: string, input: any): AccountRecord {
+  const characters: Record<string, CharacterRecord> = {};
+  if (input && typeof input.characters === 'object') {
+    for (const [rawId, character] of Object.entries(input.characters as Record<string, any>)) {
+      const charId = String(rawId ?? '').trim();
+      if (!charId) continue;
+      const sanitized = sanitizeCharacter(charId, character);
+      characters[sanitized.id] = sanitized;
+    }
+  }
+
+  let activeCharacterId: string | undefined;
+  if (typeof input?.activeCharacterId === 'string' && characters[input.activeCharacterId]) {
+    activeCharacterId = input.activeCharacterId;
+  }
+
+  const createdAt = Number.isFinite(input?.createdAt) ? Number(input.createdAt) : Date.now();
+  const updatedAt = Number.isFinite(input?.updatedAt) ? Number(input.updatedAt) : createdAt;
+  const passwordHash = typeof input?.passwordHash === 'string' && input.passwordHash ? input.passwordHash : undefined;
+
+  return {
+    id,
+    passwordHash,
+    characters,
+    activeCharacterId,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function sanitizeCharacter(id: string, input: any): CharacterRecord {
+  const createdAt = Number.isFinite(input?.createdAt) ? Number(input.createdAt) : Date.now();
+  const updatedAt = Number.isFinite(input?.updatedAt) ? Number(input.updatedAt) : createdAt;
+  const lastSelectedAt = Number.isFinite(input?.lastSelectedAt) ? Number(input.lastSelectedAt) : undefined;
+  return {
+    id,
+    profile: sanitizeProfile(input?.profile ?? {}),
+    world: sanitizeWorld(input?.world ?? {}),
+    createdAt,
+    updatedAt,
+    lastSelectedAt,
   };
 }
 
@@ -154,41 +293,227 @@ function persist() {
   }
 }
 
+function hashPassword(password: string): string {
+  const str = String(password ?? '');
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i += 1) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `h${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function ensureAccount(accountId: string): AccountRecord {
+  const id = String(accountId ?? '').trim();
+  if (!id) {
+    throw new Error('Account ID is required.');
+  }
+  const account = cache.accounts[id];
+  if (!account) {
+    throw new Error(`Account ${id} does not exist.`);
+  }
+  return account;
+}
+
+function generateCharacterId(account: AccountRecord): string {
+  const base = `char-${Math.random().toString(36).slice(2, 8)}`;
+  if (!account.characters[base]) return base;
+  let i = 1;
+  while (account.characters[`${base}-${i}`]) {
+    i += 1;
+  }
+  return `${base}-${i}`;
+}
+
+function getActiveAccount(): AccountRecord | undefined {
+  if (!cache.activeAccountId) return undefined;
+  return cache.accounts[cache.activeAccountId];
+}
+
+function getActiveCharacterRecord(): CharacterRecord | undefined {
+  const account = getActiveAccount();
+  if (!account || !account.activeCharacterId) return undefined;
+  return account.characters[account.activeCharacterId];
+}
+
 export function getSave(): SaveData {
   return deepClone(cache);
 }
 
-export function getProfile(): PlayerProfile | undefined {
-  return cache.profile ? deepClone(cache.profile) : undefined;
+export function listAccounts(): AccountSummary[] {
+  const entries = Object.values(cache.accounts).map((account) => ({
+    id: account.id,
+    characterCount: Object.keys(account.characters).length,
+    activeCharacterId: account.activeCharacterId,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  }));
+  return entries.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
-export function setProfile(profile: PlayerProfile | undefined) {
-  cache.profile = profile ? deepClone(profile) : undefined;
+export function createAccount(accountId: string, password: string): AccountRecord {
+  const id = String(accountId ?? '').trim();
+  if (!id) {
+    throw new Error('Account ID is required.');
+  }
+  if (cache.accounts[id]) {
+    throw new Error('Account already exists.');
+  }
+  const now = Date.now();
+  const account: AccountRecord = {
+    id,
+    passwordHash: hashPassword(password),
+    characters: {},
+    activeCharacterId: undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+  cache.accounts[id] = account;
+  cache.activeAccountId = id;
   persist();
+  return deepClone(account);
+}
+
+export function authenticateAccount(accountId: string, password: string): boolean {
+  const id = String(accountId ?? '').trim();
+  if (!id) {
+    return false;
+  }
+  const account = cache.accounts[id];
+  if (!account) {
+    return false;
+  }
+  const hashed = hashPassword(password);
+  if (account.passwordHash && account.passwordHash !== hashed) {
+    return false;
+  }
+  if (!account.passwordHash && password) {
+    return false;
+  }
+  cache.activeAccountId = id;
+  account.updatedAt = Date.now();
+  persist();
+  return true;
+}
+
+export function listCharacters(accountId: string): CharacterRecord[] {
+  const account = ensureAccount(accountId);
+  return Object.values(account.characters)
+    .map((character) => deepClone(character))
+    .sort((a, b) => {
+      const selA = a.lastSelectedAt ?? 0;
+      const selB = b.lastSelectedAt ?? 0;
+      if (selA !== selB) return selB - selA;
+      return b.updatedAt - a.updatedAt;
+    });
+}
+
+export function upsertCharacter(
+  accountId: string,
+  data: { id?: string; profile: PlayerProfile; world: WorldState },
+): CharacterRecord {
+  const account = ensureAccount(accountId);
+  const id = data.id ? String(data.id).trim() : generateCharacterId(account);
+  if (!id) {
+    throw new Error('Character ID is required.');
+  }
+  const now = Date.now();
+  const record: CharacterRecord = {
+    id,
+    profile: sanitizeProfile(data.profile),
+    world: sanitizeWorld(data.world),
+    createdAt: account.characters[id]?.createdAt ?? now,
+    updatedAt: now,
+    lastSelectedAt: account.characters[id]?.lastSelectedAt,
+  };
+  account.characters[id] = record;
+  account.updatedAt = now;
+  persist();
+  return deepClone(record);
+}
+
+export function selectActiveCharacter(accountId: string | null, characterId?: string | null): ActiveSelection {
+  if (!accountId) {
+    cache.activeAccountId = undefined;
+    persist();
+    return {};
+  }
+  const account = ensureAccount(accountId);
+  let activeCharacterId: string | undefined;
+  if (characterId) {
+    const id = String(characterId).trim();
+    if (!id || !account.characters[id]) {
+      throw new Error('Character does not exist.');
+    }
+    account.characters[id].lastSelectedAt = Date.now();
+    activeCharacterId = id;
+  } else {
+    activeCharacterId = undefined;
+  }
+  account.activeCharacterId = activeCharacterId;
+  cache.activeAccountId = account.id;
+  persist();
+  return getActiveSelection();
+}
+
+export function getActiveSelection(): ActiveSelection {
+  const account = getActiveAccount();
+  if (!account) {
+    return {};
+  }
+  return { accountId: account.id, characterId: account.activeCharacterId };
+}
+
+export function getActiveProfile(): PlayerProfile | undefined {
+  const record = getActiveCharacterRecord();
+  return record ? deepClone(record.profile) : undefined;
+}
+
+export function getActiveWorld(): WorldState | undefined {
+  const record = getActiveCharacterRecord();
+  return record ? deepClone(record.world) : undefined;
+}
+
+export function getProfile(): PlayerProfile | undefined {
+  return getActiveProfile();
 }
 
 export function getWorld(): WorldState {
-  if (!cache.world) {
-    cache.world = defaultWorld();
-  }
-  return deepClone(cache.world);
+  const world = getActiveWorld();
+  return world ? world : defaultWorld();
 }
 
-export function setWorld(world: WorldState) {
-  cache.world = deepClone(world);
+export function saveActiveCharacter(profile: PlayerProfile, world: WorldState) {
+  const selection = getActiveSelection();
+  if (!selection.accountId || !selection.characterId) {
+    return;
+  }
+  const account = ensureAccount(selection.accountId);
+  const existing = account.characters[selection.characterId];
+  const now = Date.now();
+  const record: CharacterRecord = {
+    id: selection.characterId,
+    profile: sanitizeProfile(profile),
+    world: sanitizeWorld(world),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    lastSelectedAt: now,
+  };
+  account.characters[selection.characterId] = record;
+  account.activeCharacterId = selection.characterId;
+  account.updatedAt = now;
   persist();
 }
 
 export function saveAll(profile: PlayerProfile | undefined, world: WorldState) {
-  cache = {
-    profile: profile ? deepClone(profile) : undefined,
-    world: deepClone(world),
-  };
-  persist();
+  if (!profile) {
+    return;
+  }
+  saveActiveCharacter(profile, world);
 }
 
 export function resetSave() {
-  cache = { profile: undefined, world: defaultWorld() };
+  cache = defaultSave();
   persist();
 }
 
