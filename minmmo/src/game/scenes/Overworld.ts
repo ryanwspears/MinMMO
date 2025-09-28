@@ -63,6 +63,7 @@ export class Overworld extends Phaser.Scene {
   private minimapCamera?: Phaser.Cameras.Scene2D.Camera;
   private minimapBackdrop?: Phaser.GameObjects.Rectangle;
   private minimapMarker?: Phaser.GameObjects.Arc;
+  private minimapCityMarkers: Phaser.GameObjects.GameObject[] = [];
   private minimapViewport?: MinimapViewport;
 
   constructor() {
@@ -322,6 +323,8 @@ export class Overworld extends Phaser.Scene {
     minimap.ignore(ignoredByMinimap);
     this.cameras.main.ignore(marker);
 
+    this.rebuildMinimapCityMarkers();
+
     this.minimapCamera = minimap;
     this.minimapBackdrop = backdrop;
     this.minimapMarker = marker;
@@ -441,9 +444,11 @@ export class Overworld extends Phaser.Scene {
     this.minimapBackdrop = undefined;
 
     if (this.minimapMarker) {
+      this.cameras.main.removeFromRenderList(this.minimapMarker);
       this.minimapMarker.destroy();
       this.minimapMarker = undefined;
     }
+    this.disposeMinimapCityMarkers();
     this.minimapViewport = undefined;
   }
 
@@ -456,5 +461,49 @@ export class Overworld extends Phaser.Scene {
     }
     const spawn = layer.objects.find((obj) => obj.point) ?? layer.objects[0];
     return new Phaser.Math.Vector2(spawn.x ?? 0, spawn.y ?? 0);
+  }
+
+  private rebuildMinimapCityMarkers() {
+    this.disposeMinimapCityMarkers();
+
+    if (!this.map) {
+      return;
+    }
+
+    const layer = this.map.getObjectLayer("CityMarkers");
+    if (!layer || !Array.isArray(layer.objects) || layer.objects.length === 0) {
+      return;
+    }
+
+    for (const object of layer.objects) {
+      const baseX = object.x ?? 0;
+      const baseY = object.y ?? 0;
+      const width = object.width ?? 0;
+      const height = object.height ?? 0;
+      const x = object.point ? baseX : baseX + width * 0.5;
+      const y = object.point ? baseY : baseY + height * 0.5;
+      const cityMarker = this.add.circle(x, y, 6, 0xfbd46d, 1);
+      cityMarker.setDepth(PLAYER_DEPTH + 25);
+      cityMarker.setScrollFactor(1);
+      cityMarker.setVisible(true);
+      this.cameras.main.ignore(cityMarker);
+      this.minimapCityMarkers.push(cityMarker);
+    }
+  }
+
+  private disposeMinimapCityMarkers() {
+    if (this.minimapCityMarkers.length === 0) {
+      return;
+    }
+
+    const mainCamera = this.cameras?.main;
+    for (const marker of this.minimapCityMarkers) {
+      if (mainCamera) {
+        mainCamera.removeFromRenderList(marker);
+      }
+      marker.destroy();
+    }
+
+    this.minimapCityMarkers = [];
   }
 }
