@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { CONFIG } from '@config/store';
 import type { Stats } from '@engine/battle/types';
-import type { ActiveSelection, CharacterRecord, PlayerProfile, WorldState } from '@game/save';
+import type { AccountSummary, ActiveSelection, CharacterRecord, PlayerProfile, WorldState } from '@game/save';
 import {
   authenticateAccount,
   createAccount,
@@ -76,15 +76,6 @@ function buildProfile(name: string, clazz: string): PlayerProfile {
   };
 }
 
-function summarizeAccounts() {
-  return listAccounts();
-}
-
-function summarizeCharacters(accountId: string | undefined): CharacterRecord[] {
-  if (!accountId) return [];
-  return listCharacters(accountId);
-}
-
 export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGame, onLogout }: AuthAppProps) {
   const [view, setView] = useState<ViewState>(() => {
     if (selection.accountId && selection.characterId) return 'ready';
@@ -105,9 +96,50 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
   const [charClass, setCharClass] = useState<string>('');
   const [charError, setCharError] = useState('');
   const [refreshCounter, setRefreshCounter] = useState(0);
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [characters, setCharacters] = useState<CharacterRecord[]>([]);
 
-  const accounts = useMemo(() => summarizeAccounts(), [refreshCounter, selection.accountId]);
-  const characters = useMemo(() => summarizeCharacters(activeAccountId), [activeAccountId, refreshCounter, selection.characterId]);
+  useEffect(() => {
+    let cancelled = false;
+    listAccounts()
+      .then((entries) => {
+        if (!cancelled) {
+          setAccounts(entries);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load accounts', error);
+        if (!cancelled) {
+          setAccounts([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshCounter, selection.accountId]);
+
+  useEffect(() => {
+    if (!activeAccountId) {
+      setCharacters([]);
+      return;
+    }
+    let cancelled = false;
+    listCharacters(activeAccountId)
+      .then((entries) => {
+        if (!cancelled) {
+          setCharacters(entries);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load characters', error);
+        if (!cancelled) {
+          setCharacters([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAccountId, refreshCounter]);
 
   const config = CONFIG();
   const classSummaries = useMemo<ClassSummary[]>(() => {
@@ -142,7 +174,7 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
   }, []);
 
   const handleCreateAccount = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       resetAuthForms();
       if (!signupId.trim()) {
@@ -154,8 +186,8 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
         return;
       }
       try {
-        const account = createAccount(signupId, signupPassword);
-        selectActiveCharacter(account.id, null);
+        const account = await createAccount(signupId, signupPassword);
+        await selectActiveCharacter(account.id, null);
         setActiveAccountId(account.id);
         setView('character-create');
         setRefreshCounter((x) => x + 1);
@@ -168,7 +200,7 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
   );
 
   const handleLogin = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       resetAuthForms();
       const trimmed = loginId.trim();
@@ -176,7 +208,7 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
         setLoginError('Enter your account ID.');
         return;
       }
-      const ok = authenticateAccount(trimmed, loginPassword);
+      const ok = await authenticateAccount(trimmed, loginPassword);
       if (!ok) {
         setLoginError('Invalid credentials.');
         return;
@@ -190,7 +222,7 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
   );
 
   const handleCreateCharacter = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       resetAuthForms();
       if (!activeAccountId) {
@@ -204,8 +236,8 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
       try {
         const profile = buildProfile(charName, charClass);
         const world: WorldState = createDefaultWorld();
-        const record = upsertCharacter(activeAccountId, { profile, world });
-        selectActiveCharacter(activeAccountId, record.id);
+        const record = await upsertCharacter(activeAccountId, { profile, world });
+        await selectActiveCharacter(activeAccountId, record.id);
         setCharName('Adventurer');
         setView('ready');
         setRefreshCounter((x) => x + 1);
@@ -218,10 +250,10 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
   );
 
   const handleSelectCharacter = useCallback(
-    (characterId: string) => {
+    async (characterId: string) => {
       if (!activeAccountId) return;
       try {
-        selectActiveCharacter(activeAccountId, characterId);
+        await selectActiveCharacter(activeAccountId, characterId);
         setView('ready');
         setRefreshCounter((x) => x + 1);
         onSelectionChange(getActiveSelection());
@@ -232,8 +264,8 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
     [activeAccountId, onSelectionChange],
   );
 
-  const handleLogout = useCallback(() => {
-    selectActiveCharacter(null);
+  const handleLogout = useCallback(async () => {
+    await selectActiveCharacter(null);
     setActiveAccountId(undefined);
     setView('landing');
     setRefreshCounter((x) => x + 1);
