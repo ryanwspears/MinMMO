@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import Phaser from 'phaser';
 import { load, subscribe } from '@config/store';
@@ -50,8 +50,10 @@ function GameShell() {
     }
   }, []);
 
+  const shouldRunGame = isGameRunning && Boolean(selection.characterId);
+
   useEffect(() => {
-    if (!isGameRunning || !selection.characterId) {
+    if (!shouldRunGame) {
       destroyGame();
       return;
     }
@@ -97,7 +99,7 @@ function GameShell() {
       game.destroy(true);
       gameRef.current = null;
     };
-  }, [destroyGame, isGameRunning, selection.characterId]);
+  }, [destroyGame, shouldRunGame]);
 
   const handleLogout = useCallback(() => {
     setIsGameRunning(false);
@@ -105,7 +107,19 @@ function GameShell() {
     setSelection(getActiveSelection());
   }, [destroyGame]);
 
-  const hasActiveCharacter = useMemo(() => Boolean(selection.accountId && selection.characterId), [selection.accountId, selection.characterId]);
+  if (!shouldRunGame) {
+    return (
+      <div className="auth-fullscreen">
+        <AuthApp
+          selection={selection}
+          isGameRunning={isGameRunning}
+          onSelectionChange={refreshSelection}
+          onStartGame={startGame}
+          onLogout={handleLogout}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="game-layout">
@@ -120,12 +134,6 @@ function GameShell() {
       </aside>
       <main className="game-stage">
         <div ref={containerRef} className="phaser-host" />
-        {!isGameRunning && !hasActiveCharacter && (
-          <div className="game-placeholder">
-            <h2>Select a character to begin</h2>
-            <p className="small">Create or choose a hero on the left to enter the overworld.</p>
-          </div>
-        )}
       </main>
     </div>
   );
