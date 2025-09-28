@@ -1,4 +1,4 @@
-import type { GameConfig } from './schema'
+import type { GameConfig } from './schema.js'
 
 export const DEFAULTS: GameConfig = {
   __version: 1,

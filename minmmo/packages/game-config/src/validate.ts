@@ -1,4 +1,4 @@
-import { DEFAULTS } from './defaults';
+import { DEFAULTS } from './defaults.js';
 import type {
   ClassPreset,
   ClassSkills,
@@ -11,7 +11,7 @@ import type {
   StartItems,
   StatusDef,
   TargetSelector,
-} from './schema';
+} from './schema.js';
 import { z } from 'zod';
 
 type NonEmptyArray<T extends string> = readonly [T, ...T[]];

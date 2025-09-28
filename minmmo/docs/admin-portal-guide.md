@@ -6,18 +6,18 @@ This guide explains how to run the MinMMO Admin CMS, how configuration changes a
 
 1. **Install dependencies** – Run `npm install` from the repository root. Node.js 18 or newer is recommended for the bundled Vite tooling.
 2. **Launch the admin portal** – Start the dev server with `npm run dev` and open [`http://localhost:5173/admin.html`](http://localhost:5173/admin.html) in your browser. The main game client remains available at `index.html` if you need to spot-check changes in play.
-3. **Persisting changes** – The CMS reads and writes to the browser's `localStorage`. Saving keeps the latest validated configuration locally, exporting downloads the same payload as JSON, and importing merges a JSON file back into `localStorage`. Reloading discards in-memory edits and reloads what is stored in the browser.
+3. **Persisting changes** - The CMS now reads and writes through the game API backed by PostgreSQL. Saving pushes the validated configuration to the server, exporting downloads the same payload as JSON, importing posts a JSON file back through the API, and Reload fetches the canonical copy from the database.
 
-> **Tip:** Always export a JSON backup before clearing site data or switching devices so you can restore your custom content quickly.
+> **Tip:** Export a JSON backup before major edits so you can quickly recover if a migration or deployment overwrites the database.
 
 ## Toolbar workflow
 
 The toolbar at the top of the portal controls persistence and navigation:
 
-- **Save** – Validates every tab, repairs shape issues, and writes the sanitized configuration to `localStorage`. The button is disabled while any validation errors remain.
-- **Export JSON** – Downloads the current in-memory configuration as `game-config.json`. Use this for version control check-ins or for sharing presets.
-- **Import JSON** – Uploads a JSON file, runs it through the same validation/repair pipeline, then replaces the active configuration and stored copy. You will see a confirmation message near the toolbar once import completes.
-- **Reload** – Restores the configuration that is currently stored in `localStorage`, discarding unsaved edits in the form.
+- **Save** - Validates every tab, repairs shape issues, and writes the sanitized configuration to PostgreSQL through the API. The button is disabled while any validation errors remain.
+- **Export JSON** - Downloads the current in-memory configuration as `game-config.json`. Use this for version control check-ins or for sharing presets.
+- **Import JSON** - Uploads a JSON file, runs it through the same validation/repair pipeline, then posts the sanitized payload to the server before updating the UI. You will see a confirmation message near the toolbar once import completes.
+- **Reload** - Fetches the configuration that is currently stored in PostgreSQL, discarding unsaved edits in the form.
 - **Tab buttons** – Switch between Skills, Items, Classes, Statuses, Enemies, NPCs, Balance, and World Data. The active tab name is bolded.
 
 Whenever the validator finds an issue, a red banner appears with the message **"Resolve validation errors before saving."** Field-level messages appear directly under the offending inputs so you can fix the exact problems (missing IDs, invalid numbers, malformed JSON, etc.).
@@ -152,6 +152,6 @@ Manage shared lookup tables here.
 - **Save button disabled** – Hover over red-highlighted fields to find specific validation messages. All IDs and required numbers must be present before saving.
 - **Red banner persists** – Expand each tab and check for inline errors under inputs or inside JSON editors. The forms remember the last field that failed validation.
 - **JSON editor errors** – The modifier, hook, dialogue option, and balance editors require valid JSON. The editor clears errors automatically once the text parses.
-- **Lost data after reload** – Remember that `Reload` pulls from `localStorage`. If you imported or edited data without saving, reload will revert to the last saved snapshot.
+- **Lost data after reload** - Reload pulls from PostgreSQL. If you imported or edited data without saving, reload reverts to the last stored snapshot.
 
 Export frequently and keep backups of `game-config.json` in version control to ensure reproducibility across environments.

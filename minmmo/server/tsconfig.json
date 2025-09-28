@@ -5,14 +5,29 @@
     "moduleResolution": "NodeNext",
     "baseUrl": "./",
     "paths": {
-      "@game-config/*": ["../packages/game-config/src/*"]
+      "@game-config/defaults": [
+        "../packages/game-config/src/defaults.ts"
+      ],
+      "@game-config/*": [
+        "../packages/game-config/src/*"
+      ],
+      "@game-config/schema": [
+        "../packages/game-config/src/schema.ts"
+      ],
+      "@game-config/validate": [
+        "../packages/game-config/src/validate.ts"
+      ]
     },
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "strict": true,
     "resolveJsonModule": true
   },
-  "include": ["./**/*.ts"]
+  "include": [
+    "./**/*.ts"
+  ]
 }
