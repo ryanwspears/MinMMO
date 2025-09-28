@@ -2190,9 +2190,13 @@ export class Battle extends Phaser.Scene {
   private checkOutcome() {
     if (!this.state.ended || this.outcomeHandled) return;
     this.outcomeHandled = true;
+    const outcome = this.state.ended?.reason;
     const summary = this.processOutcome();
+    const position = this.world.lastOverworldPosition
+      ? { x: this.world.lastOverworldPosition.x, y: this.world.lastOverworldPosition.y }
+      : undefined;
     this.time.delayedCall(600, () => {
-      this.scene.start('Overworld', { summary });
+      this.scene.start('Overworld', { summary, outcome, position });
     });
   }
 
@@ -2229,6 +2233,7 @@ export class Battle extends Phaser.Scene {
       this.profile.gold = Math.max(0, this.profile.gold - goldLoss);
       this.profile.stats.gold = this.profile.gold;
       summary.push(`Defeated. Lost ${goldLoss} gold.`);
+      this.world.lastOverworldPosition = undefined;
     } else if (reason === 'fled') {
       summary.push('You fled the battle.');
     }
