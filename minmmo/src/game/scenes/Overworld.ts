@@ -51,6 +51,8 @@ const MINIMAP_OUTLINE_COLOR = 0xffffff;
 const MINIMAP_OUTLINE_ALPHA = 0.45;
 const MINIMAP_INDICATOR_RADIUS = 100;
 const MINIMAP_INDICATOR_COLOR = 0xFFBF00;
+const MINIMAP_CITY_MARKER_DEPTH = 1500;
+const MINIMAP_PLAYER_INDICATOR_DEPTH = MINIMAP_CITY_MARKER_DEPTH + 10;
 
 type EncounterKind = "common" | "wraith" | "ogre";
 
@@ -690,7 +692,7 @@ export class Overworld extends Phaser.Scene {
 
     const marker = this.add.circle(this.player?.x ?? 0, this.player?.y ?? 0, MINIMAP_INDICATOR_RADIUS, MINIMAP_INDICATOR_COLOR);
     marker.setAlpha(0.9);
-    marker.setDepth(PLAYER_DEPTH + 50);
+    marker.setDepth(MINIMAP_PLAYER_INDICATOR_DEPTH);
     marker.setScrollFactor(1);
     marker.setVisible(false);
     marker.setStrokeStyle(3, MINIMAP_OUTLINE_COLOR, 0.8);
@@ -867,8 +869,8 @@ export class Overworld extends Phaser.Scene {
       const height = object.height ?? 0;
       const x = object.point ? baseX : baseX + width * 0.5;
       const y = object.point ? baseY : baseY + height * 0.5;
-      const cityMarker = this.add.circle(x, y, 6, 0xfbd46d, 1);
-      cityMarker.setDepth(PLAYER_DEPTH + 25);
+      const cityMarker = this.add.circle(x, y, 80, 0xF5275E, 1);
+      cityMarker.setDepth(MINIMAP_CITY_MARKER_DEPTH);
       cityMarker.setScrollFactor(1);
       cityMarker.setVisible(true);
       this.cameras.main.ignore(cityMarker);
