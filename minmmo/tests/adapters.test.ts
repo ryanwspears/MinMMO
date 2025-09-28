@@ -81,6 +81,12 @@ describe('content adapters', () => {
     },
   };
 
+  it('includes default enemies for overworld encounters', () => {
+    expect(DEFAULTS.enemies).toHaveProperty('slime');
+    expect(DEFAULTS.enemies).toHaveProperty('wraith');
+    expect(DEFAULTS.enemies).toHaveProperty('ogre');
+  });
+
   const makeActor = (overrides: Partial<Actor['stats']>): Actor => ({
     id: 'hero',
     name: 'Hero',
