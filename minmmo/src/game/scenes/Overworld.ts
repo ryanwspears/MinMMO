@@ -1,5 +1,10 @@
 import Phaser from "phaser";
-import { createDefaultWorld, getActiveProfile, getActiveWorld } from "@game/save";
+import {
+  createDefaultWorld,
+  getActiveProfile,
+  getActiveWorld,
+  saveActiveCharacter,
+} from "@game/save";
 
 const MAP_KEY = "mapOne";
 const MAP_JSON_PATH = "assets/mapOne/MapOne.json";
@@ -119,6 +124,12 @@ type WASDKeys = Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
 type MinimapViewport = { x: number; y: number; width: number; height: number; zoom: number };
 
+interface OverworldInitData {
+  summary?: string[];
+  outcome?: "victory" | "defeat" | "fled";
+  position?: { x: number; y: number };
+}
+
 export class Overworld extends Phaser.Scene {
   private map?: Phaser.Tilemaps.Tilemap;
   private layers = new Map<string, Phaser.Tilemaps.TilemapLayer>();
@@ -134,9 +145,14 @@ export class Overworld extends Phaser.Scene {
   private spawnZoneBodies = new Map<MatterJS.BodyType, SpawnZone>();
   private encounterActive = false;
   private matterCollisionAttached = false;
+  private initData?: OverworldInitData;
 
   constructor() {
     super("Overworld");
+  }
+
+  init(data: OverworldInitData = {}) {
+    this.initData = data;
   }
 
   preload() {
@@ -562,6 +578,12 @@ export class Overworld extends Phaser.Scene {
 
     const world = getActiveWorld() ?? createDefaultWorld();
 
+    if (this.player) {
+      world.lastOverworldPosition = { x: this.player.x, y: this.player.y };
+    }
+
+    saveActiveCharacter(profile, world);
+
     this.encounterActive = true;
     this.detachEncounterCollisionHandler();
     this.removeZoneInstance(zone);
@@ -613,7 +635,7 @@ export class Overworld extends Phaser.Scene {
   }
 
   private spawnPlayer() {
-    const spawn = this.resolvePlayerSpawnPoint();
+    const spawn = this.determineSpawnPoint();
     const player = this.matter.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY, undefined, {
       frictionAir: 0.02,
       ignoreGravity: true,
@@ -664,6 +686,28 @@ export class Overworld extends Phaser.Scene {
     this.player.setVelocity(vx, vy);
   }
 
+
+  private determineSpawnPoint(): Phaser.Math.Vector2 {
+    const outcome = this.initData?.outcome;
+    if (outcome !== "defeat") {
+      const dataPosition = this.initData?.position;
+      if (dataPosition && Number.isFinite(dataPosition.x) && Number.isFinite(dataPosition.y)) {
+        return new Phaser.Math.Vector2(dataPosition.x, dataPosition.y);
+      }
+
+      const world = getActiveWorld();
+      const worldPosition = world?.lastOverworldPosition;
+      if (
+        worldPosition &&
+        Number.isFinite(worldPosition.x) &&
+        Number.isFinite(worldPosition.y)
+      ) {
+        return new Phaser.Math.Vector2(worldPosition.x, worldPosition.y);
+      }
+    }
+
+    return this.resolvePlayerSpawnPoint();
+  }
 
   private createMinimap() {
     if (!this.map) {

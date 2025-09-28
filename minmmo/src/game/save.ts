@@ -28,6 +28,7 @@ export interface WorldState {
   flags: Record<string, boolean>;
   turn: number;
   lastLocation?: string;
+  lastOverworldPosition?: { x: number; y: number };
 }
 
 export interface CharacterRecord {
@@ -281,7 +282,20 @@ function sanitizeWorld(input: any): WorldState {
     flags: input && typeof input.flags === 'object' ? { ...input.flags } : {},
     turn: Math.max(0, Number(input?.turn) || 0),
     lastLocation: typeof input?.lastLocation === 'string' ? input.lastLocation : undefined,
+    lastOverworldPosition:
+      input && typeof input.lastOverworldPosition === 'object'
+        ? sanitizePoint(input.lastOverworldPosition)
+        : undefined,
   };
+}
+
+function sanitizePoint(value: any): { x: number; y: number } | undefined {
+  const x = Number(value?.x);
+  const y = Number(value?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return undefined;
+  }
+  return { x, y };
 }
 
 function persist() {
