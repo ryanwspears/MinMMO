@@ -3,99 +3,203 @@ import { pool } from '../db.js'
 
 const router = Router()
 
-router.get('/', async (_req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT c.id, c.account_id, c.name, c.level, c.data, c.updated_at, a.username AS account_username
-       FROM characters c
-       JOIN accounts a ON a.id = c.account_id
-       ORDER BY c.updated_at DESC`
-    )
-    res.json(rows)
-  } catch (error) {
-    next(error)
-  }
-})
+interface CharacterRow {
+  id: string
+  account_id: string
+  profile: any
+  created_at: Date | string | null
+  updated_at: Date | string | null
+  last_selected_at: Date | string | null
+  world: any
+  inventory: any
+}
 
-router.get('/:id', async (req, res, next) => {
-  try {
-    const id = Number.parseInt(req.params.id, 10)
-    if (Number.isNaN(id)) {
-      res.status(400).json({ message: 'Invalid character id' })
-      return
-    }
-    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [id])
-    if (rows.length === 0) {
-      res.status(404).json({ message: 'Character not found' })
-      return
-    }
-    res.json(rows[0])
-  } catch (error) {
-    next(error)
+function toEpoch(value: Date | string | null): number {
+  if (!value) return Date.now()
+  const date = value instanceof Date ? value : new Date(value)
+  const epoch = Number.isFinite(date.valueOf()) ? date.valueOf() : Date.now()
+  return epoch
+}
+
+function mapCharacter(row: CharacterRow) {
+  const profile = row.profile && typeof row.profile === 'object' ? { ...row.profile } : {}
+  const inventory = Array.isArray(row.inventory) ? row.inventory : []
+  return {
+    id: row.id,
+    profile: { ...profile, inventory },
+    world: row.world && typeof row.world === 'object' ? row.world : {},
+    createdAt: toEpoch(row.created_at ?? null),
+    updatedAt: toEpoch(row.updated_at ?? null),
+    lastSelectedAt: row.last_selected_at ? toEpoch(row.last_selected_at) : undefined,
   }
-})
+}
+
+function extractProfile(input: any): { profile: any; inventory: any[] } {
+  if (!input || typeof input !== 'object') {
+    return { profile: {}, inventory: [] }
+  }
+  const { inventory, ...rest } = input as Record<string, unknown>
+  const items = Array.isArray(inventory) ? inventory : []
+  return { profile: rest, inventory: items }
+}
+
+function sanitizeWorld(input: any): any {
+  if (!input || typeof input !== 'object') return {}
+  return input
+}
+
+function generateCharacterId(): string {
+  return `char-${Math.random().toString(36).slice(2, 10)}`
+}
+
+async function fetchCharacterRow(characterId: string) {
+  const { rows } = await pool.query<CharacterRow>(
+    `SELECT c.id, c.account_id, c.profile, c.created_at, c.updated_at, c.last_selected_at,
+            COALESCE(w.state, '{}'::jsonb) AS world,
+            COALESCE(i.items, '[]'::jsonb) AS inventory
+     FROM account_characters c
+     LEFT JOIN character_world_states w ON w.character_id = c.id
+     LEFT JOIN character_inventories i ON i.character_id = c.id
+     WHERE c.id = $1`,
+    [characterId]
+  )
+  return rows[0]
+}
 
 router.post('/', async (req, res, next) => {
-  const { accountId, name, level, data } = req.body ?? {}
-  const parsedAccountId = Number.parseInt(String(accountId), 10)
-  if (Number.isNaN(parsedAccountId) || !name) {
-    res.status(400).json({ message: 'accountId and name are required' })
+  const accountId = typeof req.body?.accountId === 'string' ? req.body.accountId.trim() : ''
+  if (!accountId) {
+    res.status(400).json({ message: 'accountId is required' })
     return
   }
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO characters (account_id, name, level, data)
-       VALUES ($1, $2, COALESCE($3, 1), COALESCE($4, '{}'::jsonb))
-       RETURNING *`,
-      [parsedAccountId, name, level, data]
-    )
-    res.status(201).json(rows[0])
+    const accountExists = await pool.query('SELECT 1 FROM account_credentials WHERE id = $1', [accountId])
+    if (accountExists.rowCount === 0) {
+      res.status(404).json({ message: 'Account not found' })
+      return
+    }
+    const providedId = typeof req.body?.id === 'string' ? req.body.id.trim() : ''
+    const { profile, inventory } = extractProfile(req.body?.profile)
+    const world = sanitizeWorld(req.body?.world)
+
+    let characterId = providedId || generateCharacterId()
+    let attempts = 0
+
+    while (attempts < 5) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query(
+          `INSERT INTO account_characters (id, account_id, profile)
+           VALUES ($1, $2, $3)`,
+          [characterId, accountId, profile]
+        )
+        await client.query(
+          `INSERT INTO character_world_states (character_id, state)
+           VALUES ($1, $2)
+           ON CONFLICT (character_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()`,
+          [characterId, world]
+        )
+        await client.query(
+          `INSERT INTO character_inventories (character_id, items)
+           VALUES ($1, $2)
+           ON CONFLICT (character_id) DO UPDATE SET items = EXCLUDED.items, updated_at = NOW()`,
+          [characterId, inventory]
+        )
+        const { rows } = await client.query<CharacterRow>(
+          `SELECT c.id, c.account_id, c.profile, c.created_at, c.updated_at, c.last_selected_at,
+                  COALESCE(w.state, '{}'::jsonb) AS world,
+                  COALESCE(i.items, '[]'::jsonb) AS inventory
+           FROM account_characters c
+           LEFT JOIN character_world_states w ON w.character_id = c.id
+           LEFT JOIN character_inventories i ON i.character_id = c.id
+           WHERE c.id = $1`,
+          [characterId]
+        )
+        await client.query('COMMIT')
+        client.release()
+        res.status(201).json(mapCharacter(rows[0]))
+        return
+      } catch (error: any) {
+        await client.query('ROLLBACK')
+        client.release()
+        if (error?.code === '23505' && !providedId) {
+          attempts += 1
+          characterId = generateCharacterId()
+          continue
+        }
+        next(error)
+        return
+      }
+    }
+
+    res.status(500).json({ message: 'Unable to allocate character id' })
   } catch (error) {
     next(error)
   }
 })
 
 router.put('/:id', async (req, res, next) => {
-  const { name, level, data } = req.body ?? {}
-  try {
-    const id = Number.parseInt(req.params.id, 10)
-    if (Number.isNaN(id)) {
-      res.status(400).json({ message: 'Invalid character id' })
-      return
-    }
-    const { rows } = await pool.query(
-      `UPDATE characters
-       SET name = COALESCE($2, name),
-           level = COALESCE($3, level),
-           data = COALESCE($4, data),
-           updated_at = NOW()
-       WHERE id = $1
-       RETURNING *`,
-      [id, name, level, data]
-    )
-    if (rows.length === 0) {
-      res.status(404).json({ message: 'Character not found' })
-      return
-    }
-    res.json(rows[0])
-  } catch (error) {
-    next(error)
+  const characterId = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+  if (!characterId) {
+    res.status(400).json({ message: 'Invalid character id' })
+    return
   }
-})
-
-router.delete('/:id', async (req, res, next) => {
+  const accountId = typeof req.body?.accountId === 'string' ? req.body.accountId.trim() : ''
   try {
-    const id = Number.parseInt(req.params.id, 10)
-    if (Number.isNaN(id)) {
-      res.status(400).json({ message: 'Invalid character id' })
-      return
-    }
-    const { rowCount } = await pool.query('DELETE FROM characters WHERE id = $1', [id])
-    if (rowCount === 0) {
+    const existing = await fetchCharacterRow(characterId)
+    if (!existing) {
       res.status(404).json({ message: 'Character not found' })
       return
     }
-    res.status(204).send()
+    if (accountId && accountId !== existing.account_id) {
+      res.status(403).json({ message: 'Character does not belong to account' })
+      return
+    }
+
+    const { profile, inventory } = extractProfile(req.body?.profile)
+    const world = sanitizeWorld(req.body?.world)
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(
+        `UPDATE account_characters
+         SET profile = $2,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [characterId, profile]
+      )
+      await client.query(
+        `INSERT INTO character_world_states (character_id, state)
+         VALUES ($1, $2)
+         ON CONFLICT (character_id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()`,
+        [characterId, world]
+      )
+      await client.query(
+        `INSERT INTO character_inventories (character_id, items)
+         VALUES ($1, $2)
+         ON CONFLICT (character_id) DO UPDATE SET items = EXCLUDED.items, updated_at = NOW()`,
+        [characterId, inventory]
+      )
+      const { rows } = await client.query<CharacterRow>(
+        `SELECT c.id, c.account_id, c.profile, c.created_at, c.updated_at, c.last_selected_at,
+                COALESCE(w.state, '{}'::jsonb) AS world,
+                COALESCE(i.items, '[]'::jsonb) AS inventory
+         FROM account_characters c
+         LEFT JOIN character_world_states w ON w.character_id = c.id
+         LEFT JOIN character_inventories i ON i.character_id = c.id
+         WHERE c.id = $1`,
+        [characterId]
+      )
+      await client.query('COMMIT')
+      res.json(mapCharacter(rows[0]))
+    } catch (error) {
+      await client.query('ROLLBACK')
+      next(error)
+    } finally {
+      client.release()
+    }
   } catch (error) {
     next(error)
   }

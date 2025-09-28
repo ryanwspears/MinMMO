@@ -1,7 +1,33 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { PlayerProfile, WorldState } from '@game/save';
+import {
+  authenticateAccountRequest,
+  createAccountRequest,
+  getCharacterRequest,
+  listAccountsRequest,
+  listCharactersRequest,
+  selectActiveCharacterRequest,
+  upsertCharacterRequest,
+} from '@game/api/saveClient';
 
-const SAVE_KEY = 'minmmo:save';
+vi.mock('@game/api/saveClient', () => ({
+  authenticateAccountRequest: vi.fn(),
+  createAccountRequest: vi.fn(),
+  getCharacterRequest: vi.fn(),
+  listAccountsRequest: vi.fn(),
+  listCharactersRequest: vi.fn(),
+  selectActiveCharacterRequest: vi.fn(),
+  upsertCharacterRequest: vi.fn(),
+  setSaveApiBase: vi.fn(),
+}));
+
+const mockedAuthenticateAccountRequest = vi.mocked(authenticateAccountRequest);
+const mockedCreateAccountRequest = vi.mocked(createAccountRequest);
+const mockedGetCharacterRequest = vi.mocked(getCharacterRequest);
+const mockedListAccountsRequest = vi.mocked(listAccountsRequest);
+const mockedListCharactersRequest = vi.mocked(listCharactersRequest);
+const mockedSelectActiveCharacterRequest = vi.mocked(selectActiveCharacterRequest);
+const mockedUpsertCharacterRequest = vi.mocked(upsertCharacterRequest);
 
 function buildProfile(name = 'Hero'): PlayerProfile {
   return {
@@ -40,70 +66,106 @@ function buildWorld(): WorldState {
 
 describe('save auth helpers', () => {
   beforeEach(() => {
-    localStorage.clear();
+    vi.clearAllMocks();
     vi.resetModules();
   });
 
   test('creates accounts and authenticates credentials', async () => {
+    const now = Date.now();
+    mockedCreateAccountRequest.mockResolvedValue({
+      id: 'player-one',
+      characters: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockedListAccountsRequest.mockResolvedValue([
+      { id: 'player-one', characterCount: 0, createdAt: now, updatedAt: now },
+    ]);
+    mockedAuthenticateAccountRequest.mockImplementation(async (_id: string, password: string) => ({
+      success: password === 's3cret',
+    }));
+
     const save = await import('@game/save');
     save.resetSave();
 
-    const account = save.createAccount('player-one', 's3cret');
+    const account = await save.createAccount('player-one', 's3cret');
     expect(account.id).toBe('player-one');
-    expect(account.passwordHash).not.toBe('s3cret');
+    expect(createAccountRequest).toHaveBeenCalledWith('player-one', 's3cret');
 
-    const accounts = save.listAccounts();
+    const accounts = await save.listAccounts();
     expect(accounts).toHaveLength(1);
     expect(accounts[0].characterCount).toBe(0);
 
-    expect(save.authenticateAccount('player-one', 's3cret')).toBe(true);
-    expect(save.authenticateAccount('player-one', 'wrong')).toBe(false);
+    expect(await save.authenticateAccount('player-one', 's3cret')).toBe(true);
+    expect(await save.authenticateAccount('player-one', 'wrong')).toBe(false);
   });
 
   test('persists characters and active selection', async () => {
+    const now = Date.now();
+    const profile = buildProfile('Alys');
+    const world = buildWorld();
+    const record = {
+      id: 'char-1',
+      profile,
+      world,
+      createdAt: now,
+      updatedAt: now,
+      lastSelectedAt: now,
+    };
+    const updatedProfile: PlayerProfile = { ...profile, level: 2, stats: { ...profile.stats, lv: 2 } };
+    const updatedWorld: WorldState = { ...world, turn: 4 };
+    const updatedRecord = {
+      ...record,
+      profile: updatedProfile,
+      world: updatedWorld,
+      updatedAt: now + 1000,
+      lastSelectedAt: now + 1000,
+    };
+
+    mockedCreateAccountRequest.mockResolvedValue({
+      id: 'player-two',
+      characters: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockedListCharactersRequest.mockResolvedValueOnce([record]).mockResolvedValueOnce([updatedRecord]);
+    mockedUpsertCharacterRequest.mockResolvedValueOnce(record).mockResolvedValueOnce(updatedRecord);
+    mockedSelectActiveCharacterRequest.mockResolvedValue(undefined);
+    mockedGetCharacterRequest.mockResolvedValueOnce(record).mockResolvedValueOnce(updatedRecord);
+
     const save = await import('@game/save');
     save.resetSave();
 
-    const account = save.createAccount('player-two', 'pw');
-    const profile = buildProfile('Alys');
-    const world = buildWorld();
-    const character = save.upsertCharacter(account.id, { profile, world });
+    const account = await save.createAccount('player-two', 'pw');
+    const created = await save.upsertCharacter(account.id, { profile, world });
+    expect(created.profile.name).toBe('Alys');
 
-    expect(character.profile.name).toBe('Alys');
-    expect(save.listCharacters(account.id)).toHaveLength(1);
+    const characters = await save.listCharacters(account.id);
+    expect(characters).toHaveLength(1);
 
-    save.selectActiveCharacter(account.id, character.id);
+    await save.selectActiveCharacter(account.id, created.id);
     expect(save.getActiveProfile()?.name).toBe('Alys');
     expect(save.getActiveWorld()?.turn).toBe(0);
 
-    const updatedProfile = { ...profile, level: 2, stats: { ...profile.stats, lv: 2 } };
-    const updatedWorld: WorldState = { ...world, turn: 4 };
-    save.saveActiveCharacter(updatedProfile, updatedWorld);
+    await save.saveActiveCharacter(updatedProfile, updatedWorld);
 
-    const stored = save.listCharacters(account.id)[0];
-    expect(stored.profile.level).toBe(2);
-    expect(stored.world.turn).toBe(4);
+    const stored = await save.listCharacters(account.id);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].profile.level).toBe(2);
+    expect(stored[0].world.turn).toBe(4);
   });
 
-  test('migrates legacy single-profile saves', async () => {
-    const legacy = {
-      profile: { ...buildProfile('Legacy Hero'), level: 3, stats: { ...buildProfile('Legacy Hero').stats, lv: 3 } },
-      world: { ...buildWorld(), turn: 7 },
-    };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(legacy));
+  test('returns false when authentication request fails', async () => {
+    mockedAuthenticateAccountRequest.mockRejectedValue(new Error('offline'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const save = await import('@game/save');
-    const accounts = save.listAccounts();
-    expect(accounts).toHaveLength(1);
-    const accountId = accounts[0].id;
+    save.resetSave();
 
-    const characters = save.listCharacters(accountId);
-    expect(characters).toHaveLength(1);
-    expect(characters[0].profile.name).toBe('Legacy Hero');
-    expect(characters[0].world.turn).toBe(7);
+    const ok = await save.authenticateAccount('player-one', 'pw');
+    expect(ok).toBe(false);
+    expect(consoleSpy).toHaveBeenCalled();
 
-    const selection = save.getActiveSelection();
-    expect(selection.accountId).toBe(accountId);
-    expect(selection.characterId).toBe(characters[0].id);
+    consoleSpy.mockRestore();
   });
 });
