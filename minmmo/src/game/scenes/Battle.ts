@@ -11,7 +11,7 @@ import {
   PlayerProfile,
   WorldState,
   MerchantState,
-  saveAll,
+  saveActiveCharacter,
   clampInventory,
 } from '@game/save';
 import { BattleLogPlayer } from './BattleLogPlayer';
@@ -2237,7 +2237,7 @@ export class Battle extends Phaser.Scene {
     this.profile.stats.sta = this.profile.stats.maxSta;
     this.profile.stats.mp = this.profile.stats.maxMp;
 
-    saveAll(this.profile, this.world);
+    saveActiveCharacter(this.profile, this.world);
     return summary;
   }
 
