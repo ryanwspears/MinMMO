@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { getProfile, getWorld } from "@game/save";
 
 const MAP_KEY = "mapOne";
 const MAP_JSON_PATH = "assets/mapOne/MapOne.json";
@@ -51,6 +52,67 @@ const MINIMAP_OUTLINE_ALPHA = 0.45;
 const MINIMAP_INDICATOR_RADIUS = 100;
 const MINIMAP_INDICATOR_COLOR = 0xFFBF00;
 
+type EncounterKind = "common" | "wraith" | "ogre";
+
+interface EncounterConfig {
+  textureKey: string;
+  label: string;
+  fill: number;
+  stroke: number;
+  radius: number;
+  enemyId: string;
+  enemyLevel: number;
+}
+
+interface SpawnZone {
+  id: string;
+  kind: EncounterKind;
+  polygon: Phaser.Geom.Polygon;
+}
+
+interface SpawnZoneInstance {
+  zone: SpawnZone;
+  sprite: Phaser.Physics.Matter.Sprite;
+}
+
+const ENCOUNTER_LAYER_MAP: Record<string, EncounterKind> = {
+  EnemySpawns: "common",
+  WraithSpawn: "wraith",
+  OgreSpawn: "ogre",
+};
+
+const ENCOUNTER_CONFIGS: Record<EncounterKind, EncounterConfig> = {
+  common: {
+    textureKey: "encounter-common",
+    label: "encounter-common",
+    fill: 0x9b59b6,
+    stroke: 0xffffff,
+    radius: 12,
+    enemyId: "slime",
+    enemyLevel: 1,
+  },
+  wraith: {
+    textureKey: "encounter-wraith",
+    label: "encounter-wraith",
+    fill: 0x16a085,
+    stroke: 0xffffff,
+    radius: 14,
+    enemyId: "wraith",
+    enemyLevel: 8,
+  },
+  ogre: {
+    textureKey: "encounter-ogre",
+    label: "encounter-ogre",
+    fill: 0xe67e22,
+    stroke: 0xffffff,
+    radius: 16,
+    enemyId: "ogre",
+    enemyLevel: 12,
+  },
+};
+
+const ENCOUNTER_DEPTH = PLAYER_DEPTH - 5;
+
 type WASDKeys = Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
 type MinimapViewport = { x: number; y: number; width: number; height: number; zoom: number };
@@ -65,6 +127,11 @@ export class Overworld extends Phaser.Scene {
   private minimapMarker?: Phaser.GameObjects.Arc;
   private minimapCityMarkers: Phaser.GameObjects.GameObject[] = [];
   private minimapViewport?: MinimapViewport;
+  private spawnZones: SpawnZone[] = [];
+  private spawnZoneInstances = new Map<string, SpawnZoneInstance>();
+  private spawnZoneBodies = new Map<MatterJS.BodyType, SpawnZone>();
+  private encounterActive = false;
+  private matterCollisionAttached = false;
 
   constructor() {
     super("Overworld");
@@ -94,6 +161,7 @@ export class Overworld extends Phaser.Scene {
     this.ensureGeneratedTextures();
     this.buildMap();
     this.spawnPlayer();
+    this.initializeEncounterSystem();
 
     if (this.player && this.map) {
       const { widthInPixels, heightInPixels } = this.map;
@@ -114,16 +182,36 @@ export class Overworld extends Phaser.Scene {
   }
 
   private ensureGeneratedTextures() {
-    if (!this.textures.exists(PLAYER_TEXTURE_KEY)) {
-      const graphics = this.add.graphics({ x: 0, y: 0 });
-      graphics.setVisible(false);
-      graphics.fillStyle(0xf1f2f6, 1);
-      graphics.fillCircle(12, 12, 12);
-      graphics.lineStyle(2, 0x5a63ff, 1);
-      graphics.strokeCircle(12, 12, 12);
-      graphics.generateTexture(PLAYER_TEXTURE_KEY, 24, 24);
-      graphics.destroy();
+    this.ensureCircleTexture(PLAYER_TEXTURE_KEY, 24, 12, 0xf1f2f6, 0x5a63ff, 2);
+
+    for (const config of Object.values(ENCOUNTER_CONFIGS)) {
+      this.ensureCircleTexture(config.textureKey, config.radius * 2 + 4, config.radius, config.fill, config.stroke, 2);
     }
+  }
+
+  private ensureCircleTexture(
+    key: string,
+    textureSize: number,
+    radius: number,
+    fill: number,
+    stroke: number,
+    strokeWidth: number,
+  ) {
+    if (this.textures.exists(key)) {
+      return;
+    }
+
+    const graphics = this.add.graphics({ x: 0, y: 0 });
+    graphics.setVisible(false);
+    graphics.fillStyle(fill, 1);
+    const center = textureSize * 0.5;
+    graphics.fillCircle(center, center, radius);
+    if (strokeWidth > 0) {
+      graphics.lineStyle(strokeWidth, stroke, 1);
+      graphics.strokeCircle(center, center, radius);
+    }
+    graphics.generateTexture(key, textureSize, textureSize);
+    graphics.destroy();
   }
 
   private normalizeTilesetData(cacheKey: string) {
@@ -203,6 +291,300 @@ export class Overworld extends Phaser.Scene {
     for (const [layerName, depth] of Object.entries(TOP_LAYER_DEPTHS)) {
       this.obtainLayer(map, tilesets, layerName, depth);
     }
+  }
+
+  private initializeEncounterSystem() {
+    if (!this.map) {
+      return;
+    }
+
+    this.rebuildSpawnZones();
+    this.spawnEncounterSensors();
+    this.attachEncounterCollisionHandler();
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupEncounters, this);
+  }
+
+  private rebuildSpawnZones() {
+    this.spawnZones = [];
+
+    if (!this.map) {
+      return;
+    }
+
+    for (const [layerName, kind] of Object.entries(ENCOUNTER_LAYER_MAP)) {
+      const layer = this.map.getObjectLayer(layerName);
+      if (!layer || !Array.isArray(layer.objects)) {
+        continue;
+      }
+
+      for (const object of layer.objects) {
+        const polygon = this.tiledObjectToPolygon(object);
+        if (!polygon) {
+          continue;
+        }
+
+        const id = `${layerName}-${object.id ?? this.spawnZones.length}`;
+        this.spawnZones.push({ id, kind, polygon });
+      }
+    }
+  }
+
+  private spawnEncounterSensors() {
+    this.cleanupEncounterSprites();
+
+    if (!this.map || this.spawnZones.length === 0) {
+      return;
+    }
+
+    for (const zone of this.spawnZones) {
+      const config = ENCOUNTER_CONFIGS[zone.kind];
+      if (!config) {
+        continue;
+      }
+
+      const point = this.getRandomPointInPolygon(zone.polygon);
+      const sprite = this.matter.add.sprite(point.x, point.y, config.textureKey, undefined, {
+        isSensor: true,
+        isStatic: true,
+        label: config.label,
+        ignoreGravity: true,
+      });
+
+      sprite.setDepth(ENCOUNTER_DEPTH);
+      sprite.setCircle(config.radius);
+      sprite.setStatic(true);
+      sprite.setIgnoreGravity(true);
+      sprite.setAlpha(0.9);
+      sprite.setData("encounterZone", zone.id);
+
+      const body = sprite.body as MatterJS.BodyType | null;
+      if (body) {
+        this.indexZoneBody(body, zone);
+      }
+
+      this.spawnZoneInstances.set(zone.id, { zone, sprite });
+    }
+  }
+
+  private attachEncounterCollisionHandler() {
+    if (this.matterCollisionAttached) {
+      return;
+    }
+    this.matter.world.on("collisionstart", this.handleCollisionStart, this);
+    this.matterCollisionAttached = true;
+  }
+
+  private detachEncounterCollisionHandler() {
+    if (!this.matterCollisionAttached) {
+      return;
+    }
+    this.matter.world.off("collisionstart", this.handleCollisionStart, this);
+    this.matterCollisionAttached = false;
+  }
+
+  private cleanupEncounterSprites() {
+    if (this.spawnZoneInstances.size === 0) {
+      this.spawnZoneBodies.clear();
+      return;
+    }
+
+    for (const { sprite } of this.spawnZoneInstances.values()) {
+      const body = sprite.body as MatterJS.BodyType | null;
+      if (body) {
+        this.unindexZoneBody(body);
+      }
+      sprite.destroy();
+    }
+
+    this.spawnZoneInstances.clear();
+    this.spawnZoneBodies.clear();
+  }
+
+  private cleanupEncounters() {
+    this.detachEncounterCollisionHandler();
+    this.cleanupEncounterSprites();
+    this.spawnZones = [];
+    this.encounterActive = false;
+  }
+
+  private tiledObjectToPolygon(object: Phaser.Types.Tilemaps.TiledObject): Phaser.Geom.Polygon | undefined {
+    if (!object || !Array.isArray(object.polygon) || object.polygon.length < 3) {
+      return undefined;
+    }
+
+    const originX = object.x ?? 0;
+    const originY = object.y ?? 0;
+    const points = object.polygon.map((pt) => ({ x: originX + pt.x, y: originY + pt.y }));
+    return new Phaser.Geom.Polygon(points as Phaser.Types.Math.Vector2Like[]);
+  }
+
+  private getRandomPointInPolygon(polygon: Phaser.Geom.Polygon): Phaser.Math.Vector2 {
+    const bounds = Phaser.Geom.Polygon.GetAABB(polygon);
+    const point = new Phaser.Math.Vector2(bounds.centerX, bounds.centerY);
+
+    if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+      const centroid = this.computePolygonCentroid(polygon);
+      return point.set(centroid.x, centroid.y);
+    }
+
+    for (let i = 0; i < 20; i += 1) {
+      const x = bounds.x + Math.random() * bounds.width;
+      const y = bounds.y + Math.random() * bounds.height;
+      if (polygon.contains(x, y)) {
+        return point.set(x, y);
+      }
+    }
+
+    const centroidFallback = this.computePolygonCentroid(polygon);
+    return point.set(centroidFallback.x, centroidFallback.y);
+  }
+
+  private computePolygonCentroid(polygon: Phaser.Geom.Polygon): Phaser.Math.Vector2 {
+    const points = polygon.points;
+    if (!points || points.length === 0) {
+      return new Phaser.Math.Vector2(0, 0);
+    }
+
+    let areaSum = 0;
+    let centroidX = 0;
+    let centroidY = 0;
+
+    for (let i = 0; i < points.length; i += 1) {
+      const current = points[i];
+      const next = points[(i + 1) % points.length];
+      const cross = current.x * next.y - next.x * current.y;
+      areaSum += cross;
+      centroidX += (current.x + next.x) * cross;
+      centroidY += (current.y + next.y) * cross;
+    }
+
+    const area = areaSum * 0.5;
+    if (Math.abs(area) < 1e-5) {
+      const fallback = points[0];
+      return new Phaser.Math.Vector2(fallback.x, fallback.y);
+    }
+
+    const factor = 1 / (6 * area);
+    return new Phaser.Math.Vector2(centroidX * factor, centroidY * factor);
+  }
+
+  private indexZoneBody(body: MatterJS.BodyType, zone: SpawnZone) {
+    this.spawnZoneBodies.set(body, zone);
+    if (Array.isArray(body.parts)) {
+      for (const part of body.parts) {
+        this.spawnZoneBodies.set(part as MatterJS.BodyType, zone);
+      }
+    }
+  }
+
+  private unindexZoneBody(body: MatterJS.BodyType) {
+    this.spawnZoneBodies.delete(body);
+    if (Array.isArray(body.parts)) {
+      for (const part of body.parts) {
+        this.spawnZoneBodies.delete(part as MatterJS.BodyType);
+      }
+    }
+  }
+
+  private getZoneFromBody(body: MatterJS.BodyType | null | undefined): SpawnZone | undefined {
+    if (!body) {
+      return undefined;
+    }
+
+    const direct = this.spawnZoneBodies.get(body);
+    if (direct) {
+      return direct;
+    }
+
+    const parent = body.parent as MatterJS.BodyType | undefined;
+    if (parent && parent !== body) {
+      return this.spawnZoneBodies.get(parent);
+    }
+
+    return undefined;
+  }
+
+  private bodyBelongsToPlayer(body: MatterJS.BodyType | null | undefined): boolean {
+    if (!body || !this.player || !this.player.body) {
+      return false;
+    }
+
+    const playerBody = this.player.body as MatterJS.BodyType;
+    if (body === playerBody) {
+      return true;
+    }
+
+    if (body.parent === playerBody) {
+      return true;
+    }
+
+    return playerBody.parent === body;
+  }
+
+  private handleCollisionStart = (event: Phaser.Physics.Matter.Events.CollisionStartEvent) => {
+    if (this.encounterActive || !this.player) {
+      return;
+    }
+
+    for (const pair of event.pairs) {
+      if (this.encounterActive) {
+        break;
+      }
+
+      const zoneA = this.getZoneFromBody(pair.bodyA);
+      const zoneB = this.getZoneFromBody(pair.bodyB);
+
+      if (zoneA && this.bodyBelongsToPlayer(pair.bodyB)) {
+        this.startBattleForZone(zoneA);
+      } else if (zoneB && this.bodyBelongsToPlayer(pair.bodyA)) {
+        this.startBattleForZone(zoneB);
+      }
+    }
+  };
+
+  private startBattleForZone(zone: SpawnZone) {
+    if (this.encounterActive) {
+      return;
+    }
+
+    const config = ENCOUNTER_CONFIGS[zone.kind];
+    if (!config) {
+      return;
+    }
+
+    const profile = getProfile();
+    if (!profile) {
+      console.warn("Encounter triggered without an active player profile.");
+      return;
+    }
+
+    const world = getWorld();
+
+    this.encounterActive = true;
+    this.detachEncounterCollisionHandler();
+    this.removeZoneInstance(zone);
+
+    this.scene.start("Battle", {
+      profile,
+      world,
+      enemyId: config.enemyId,
+      enemyLevel: config.enemyLevel,
+    });
+  }
+
+  private removeZoneInstance(zone: SpawnZone) {
+    const instance = this.spawnZoneInstances.get(zone.id);
+    if (!instance) {
+      return;
+    }
+
+    const body = instance.sprite.body as MatterJS.BodyType | null;
+    if (body) {
+      this.unindexZoneBody(body);
+    }
+
+    instance.sprite.destroy();
+    this.spawnZoneInstances.delete(zone.id);
   }
 
   private obtainLayer(
@@ -444,7 +826,10 @@ export class Overworld extends Phaser.Scene {
     this.minimapBackdrop = undefined;
 
     if (this.minimapMarker) {
-      this.cameras.main.removeFromRenderList(this.minimapMarker);
+      const mainCamera = this.cameras.main as Phaser.Cameras.Scene2D.Camera & {
+        removeFromRenderList?: (gameObject: Phaser.GameObjects.GameObject) => void;
+      };
+      mainCamera.removeFromRenderList?.(this.minimapMarker);
       this.minimapMarker.destroy();
       this.minimapMarker = undefined;
     }
@@ -496,11 +881,11 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
-    const mainCamera = this.cameras?.main;
+    const mainCamera = this.cameras?.main as Phaser.Cameras.Scene2D.Camera & {
+      removeFromRenderList?: (gameObject: Phaser.GameObjects.GameObject) => void;
+    };
     for (const marker of this.minimapCityMarkers) {
-      if (mainCamera) {
-        mainCamera.removeFromRenderList(marker);
-      }
+      mainCamera?.removeFromRenderList?.(marker);
       marker.destroy();
     }
 
