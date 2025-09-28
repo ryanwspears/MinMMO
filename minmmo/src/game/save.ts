@@ -29,6 +29,7 @@ export interface WorldState {
   turn: number;
   lastLocation?: string;
   lastOverworldPosition?: { x: number; y: number };
+  defeatedSpawnZones: string[];
 }
 
 export interface CharacterRecord {
@@ -75,7 +76,7 @@ const LEGACY_CHARACTER_ID = 'solo-hero';
 const storage: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage;
 
 function defaultWorld(): WorldState {
-  return { merchants: {}, flags: {}, turn: 0 };
+  return { merchants: {}, flags: {}, turn: 0, defeatedSpawnZones: [] };
 }
 
 export function createDefaultWorld(): WorldState {
@@ -286,6 +287,16 @@ function sanitizeWorld(input: any): WorldState {
       input && typeof input.lastOverworldPosition === 'object'
         ? sanitizePoint(input.lastOverworldPosition)
         : undefined,
+    defeatedSpawnZones: Array.isArray(input?.defeatedSpawnZones)
+      ? Array.from(
+          new Set(
+            input.defeatedSpawnZones
+              .filter((id: unknown): id is string => typeof id === 'string')
+              .map((id: string) => id.trim())
+              .filter((id) => id.length > 0),
+          ),
+        )
+      : [],
   };
 }
 

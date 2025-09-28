@@ -21,6 +21,7 @@ interface BattleInitData {
   world: WorldState;
   enemyId: string;
   enemyLevel: number;
+  spawnZoneId?: string;
 }
 
 interface LabelBackgroundElements {
@@ -170,6 +171,7 @@ export class Battle extends Phaser.Scene {
   private lastAnnouncedActor?: string;
   private lastStartOfTurn?: { actorId: string; index: number; turn: number; prevented: boolean };
   private autoSkippingPlayer = false;
+  private encounterZoneId?: string;
 
   constructor() {
     super('Battle');
@@ -213,6 +215,7 @@ export class Battle extends Phaser.Scene {
     this.outcomeHandled = false;
     this.profile = data.profile;
     this.world = data.world;
+    this.encounterZoneId = typeof data.spawnZoneId === 'string' ? data.spawnZoneId : undefined;
     const enemyFactory = Enemies()[data.enemyId];
     if (!enemyFactory) {
       this.scene.start('Overworld', { summary: [`Enemy ${data.enemyId} is not configured.`] });
@@ -2225,6 +2228,14 @@ export class Battle extends Phaser.Scene {
       summary.push(`Victory! +${rewards.xp} XP, +${rewards.gold} gold.`);
       if (rewards.loot.length) {
         summary.push(`Loot: ${rewards.loot.map((l) => `${l.id} x${l.qty}`).join(', ')}`);
+      }
+      if (this.encounterZoneId) {
+        if (!Array.isArray(this.world.defeatedSpawnZones)) {
+          this.world.defeatedSpawnZones = [];
+        }
+        if (!this.world.defeatedSpawnZones.includes(this.encounterZoneId)) {
+          this.world.defeatedSpawnZones.push(this.encounterZoneId);
+        }
       }
     } else if (reason === 'defeat') {
       const economy: any = balance.ECONOMY ?? {};
