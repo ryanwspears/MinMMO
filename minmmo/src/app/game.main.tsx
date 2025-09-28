@@ -14,9 +14,13 @@ import {
   getActiveWorld,
 } from '@game/save';
 
-const cfg = load();
-rebuildFromConfig(cfg);
 subscribe(rebuildFromConfig);
+
+load()
+  .then(rebuildFromConfig)
+  .catch((error) => {
+    console.error('Failed to load configuration', error);
+  });
 
 type GameSelection = ActiveSelection;
 

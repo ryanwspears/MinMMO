@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from 'express'
 import configRouter from './routes/config.js'
+import gameConfigRouter from './routes/gameConfig.js'
 import accountsRouter from './routes/accounts.js'
 import charactersRouter from './routes/characters.js'
 import merchantsRouter from './routes/merchants.js'
@@ -12,6 +13,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' })
 })
 
+app.use('/api/config', gameConfigRouter)
 app.use('/api/configs', configRouter)
 app.use('/api/accounts', accountsRouter)
 app.use('/api/characters', charactersRouter)

@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   load,
   save,
   exportConfig,
   importConfig,
   subscribe,
+  CONFIG,
 } from '@config/store';
 import type {
   Balance,
@@ -2253,7 +2254,7 @@ function WorldForm({ elements, tags, onChangeElements, onChangeTags, elementErro
 }
 
 export function AdminPortal() {
-  const [config, setConfig] = useState<GameConfig>(() => cloneConfig(load()));
+  const [config, setConfig] = useState<GameConfig>(() => cloneConfig(CONFIG()));
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(() => pickFirst(config.skills));
   const [selectedItemId, setSelectedItemId] = useState<string | null>(() => pickFirst(config.items));
   const [selectedClassId, setSelectedClassId] = useState<string | null>(() => pickFirst(config.classes));
@@ -2262,13 +2263,42 @@ export function AdminPortal() {
   const [selectedNpcId, setSelectedNpcId] = useState<string | null>(() => pickFirst(config.npcs));
   const [activeTab, setActiveTab] = useState<AdminTabKey>('skills');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<'info' | 'success' | 'error'>('info');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  const hydrate = useCallback(async (force = false) => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const cfg = await load({ force });
+      setConfig(cloneConfig(cfg));
+      setIsHydrated(true);
+      return { ok: true as const };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load configuration.';
+      setLoadError(message);
+      setStatusMessage(`Failed to load configuration: ${message}`);
+      setStatusTone('error');
+      return { ok: false as const, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const unsub = subscribe((cfg) => {
       setConfig(cloneConfig(cfg));
+      setIsHydrated(true);
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    void hydrate(false);
+  }, [hydrate]);
 
   const classRecords = useMemo(() => {
     const result: Record<string, ClassFormValue> = {};
@@ -2375,6 +2405,8 @@ export function AdminPortal() {
     elementValidation,
     tagValidation,
   ]);
+
+  const disableSave = hasErrors || isLoading || isSaving;
 
   const setSkill = (key: string, next: SkillDef) => {
     setConfig((prev) => {
@@ -2592,30 +2624,67 @@ export function AdminPortal() {
     });
   };
 
-  const onSave = () => {
-    save(config);
-    setStatusMessage('Configuration saved.');
+  const onSave = async () => {
+    setIsSaving(true);
+    setStatusMessage('Saving configuration...');
+    setStatusTone('info');
+    try {
+      const saved = await save(config);
+      setConfig(cloneConfig(saved));
+      setStatusMessage('Configuration saved.');
+      setStatusTone('success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save configuration.';
+      setStatusMessage(`Unable to save configuration: ${message}`);
+      setStatusTone('error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const onExport = () => {
-    const blob = new Blob([exportConfig()], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'game-config.json';
-    a.click();
+  const onExport = async () => {
+    try {
+      const json = await exportConfig();
+      const blob = new Blob([json], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'game-config.json';
+      a.click();
+      setStatusMessage('Configuration exported.');
+      setStatusTone('success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to export configuration.';
+      setStatusMessage(`Unable to export configuration: ${message}`);
+      setStatusTone('error');
+    }
   };
 
   const onImportFile = async (file?: File) => {
     if (!file) return;
-    const text = await file.text();
-    importConfig(text);
-    setConfig(cloneConfig(load()));
-    setStatusMessage('Configuration imported.');
+    try {
+      const text = await file.text();
+      const imported = await importConfig(text);
+      setConfig(cloneConfig(imported));
+      setStatusMessage('Configuration imported.');
+      setStatusTone('success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to import configuration.';
+      setStatusMessage(`Unable to import configuration: ${message}`);
+      setStatusTone('error');
+    }
   };
 
-  const onReload = () => {
-    setConfig(cloneConfig(load()));
-    setStatusMessage('Reloaded from storage.');
+  const onReload = async () => {
+    setStatusMessage('Reloading configuration...');
+    setStatusTone('info');
+    const result = await hydrate(true);
+    if (result.ok) {
+      setStatusMessage('Reloaded from server.');
+      setStatusTone('success');
+    } else {
+      setStatusMessage(`Failed to reload configuration: ${result.message}`);
+      setStatusTone('error');
+    }
   };
 
   const selectedSkill = selectedSkillId !== null ? config.skills[selectedSkillId] : null;
@@ -2625,6 +2694,26 @@ export function AdminPortal() {
   const selectedEnemy = selectedEnemyId !== null ? enemyRecords[selectedEnemyId] : null;
   const selectedNpc = selectedNpcId !== null ? config.npcs[selectedNpcId] : null;
   const tagsList = config.tags ?? [];
+
+  if (!isHydrated) {
+    if (isLoading) {
+      return (
+        <div style={{ maxWidth: 600, margin: '48px auto', padding: 24 }}>
+          <h1>Loading configuration…</h1>
+          <p className="small">Fetching the latest game data from the server.</p>
+        </div>
+      );
+    }
+    return (
+      <div style={{ maxWidth: 600, margin: '48px auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <h1>Unable to load configuration</h1>
+        <p className="small">{loadError ?? 'An unexpected error occurred while loading the configuration.'}</p>
+        <button type="button" onClick={() => void hydrate(true)}>
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   const tabs: { key: AdminTabKey; label: string }[] = [
     { key: 'skills', label: 'Skills' },
@@ -2636,6 +2725,13 @@ export function AdminPortal() {
     { key: 'balance', label: 'Balance' },
     { key: 'world', label: 'World Data' },
   ];
+
+  const statusStyle =
+    statusTone === 'success'
+      ? { borderColor: '#4a8', color: '#1b4' }
+      : statusTone === 'error'
+      ? { borderColor: '#e66', color: '#a11' }
+      : { borderColor: '#48a', color: '#237' };
 
   let mainContent: React.ReactNode;
   if (activeTab === 'skills') {
@@ -2810,17 +2906,22 @@ export function AdminPortal() {
       <h1>MinMMO Admin CMS</h1>
       <p className="small">All gameplay content is editable here. Changes apply after saving.</p>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <button type="button" onClick={onSave} disabled={hasErrors}>
+        <button type="button" onClick={() => void onSave()} disabled={disableSave}>
           Save
         </button>
-        <button type="button" onClick={onExport}>
+        <button type="button" onClick={() => void onExport()} disabled={isLoading}>
           Export JSON
         </button>
         <label className="row" style={{ gap: 6, alignItems: 'center' }}>
-          <input type="file" accept="application/json" onChange={(e) => onImportFile(e.target.files?.[0] ?? undefined)} />
+          <input
+            type="file"
+            accept="application/json"
+            disabled={isLoading}
+            onChange={(e) => void onImportFile(e.target.files?.[0] ?? undefined)}
+          />
           <span className="small">Import JSON</span>
         </label>
-        <button type="button" onClick={onReload}>
+        <button type="button" onClick={() => void onReload()} disabled={isLoading}>
           Reload
         </button>
         <div className="row" style={{ marginLeft: 'auto', gap: 8, flexWrap: 'wrap' }}>
@@ -2837,7 +2938,7 @@ export function AdminPortal() {
         </div>
       </div>
       {statusMessage && (
-        <div className="card" style={{ borderColor: '#4a8', color: '#1b4', padding: 12 }}>{statusMessage}</div>
+        <div className="card" style={{ ...statusStyle, padding: 12 }}>{statusMessage}</div>
       )}
       {hasErrors && (
         <div className="card" style={{ borderColor: '#d22', color: '#d22', padding: 12 }}>

@@ -1,34 +1,7 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { validateAndRepair } from '@content/validate';
 import { DEFAULTS } from '@config/defaults';
-
-class MemoryStorage implements Storage {
-  private store = new Map<string, string>();
-
-  get length() {
-    return this.store.size;
-  }
-
-  clear(): void {
-    this.store.clear();
-  }
-
-  getItem(key: string): string | null {
-    return this.store.has(key) ? this.store.get(key)! : null;
-  }
-
-  key(index: number): string | null {
-    return Array.from(this.store.keys())[index] ?? null;
-  }
-
-  removeItem(key: string): void {
-    this.store.delete(key);
-  }
-
-  setItem(key: string, value: string): void {
-    this.store.set(key, value);
-  }
-}
+import { useConfigApiMock, restoreConfigApiMock } from './helpers/configApiMock';
 
 const brokenConfig = {
   __version: 1,
@@ -45,8 +18,15 @@ const brokenConfig = {
 };
 
 describe('validateAndRepair', () => {
+  let api: ReturnType<typeof useConfigApiMock>;
+
   beforeEach(() => {
-    (globalThis as any).localStorage = new MemoryStorage();
+    api = useConfigApiMock();
+  });
+
+  afterEach(() => {
+    restoreConfigApiMock();
+    vi.resetModules();
   });
 
   it('fills missing branches from defaults', () => {
@@ -59,27 +39,23 @@ describe('validateAndRepair', () => {
   });
 
   it('round-trips through import/export with repairs', async () => {
-    const storage = new MemoryStorage();
-    (globalThis as any).localStorage = storage;
     vi.resetModules();
     const store = await import('@config/store');
-    store.importConfig(JSON.stringify(brokenConfig));
-    const exported = JSON.parse(store.exportConfig());
+    await store.importConfig(JSON.stringify(brokenConfig));
+    const exported = JSON.parse(await store.exportConfig());
     expect(exported.classes.Knight.maxHp).toBe(60);
     expect(exported.startItems.Knight).toEqual([]);
     expect(exported.classSkills.Knight).toEqual([]);
   });
 
   it('repairs persisted config on load', async () => {
-    const storage = new MemoryStorage();
-    storage.setItem('minmmo:config', JSON.stringify({
+    api.setRawConfig({
       __version: 1,
       startItems: { Knight: null },
-    }));
-    (globalThis as any).localStorage = storage;
+    });
     vi.resetModules();
     const store = await import('@config/store');
-    const cfg = store.load();
+    const cfg = await store.load({ force: true });
     expect(cfg.startItems.Knight).toEqual([]);
     expect(cfg.classes).toEqual(DEFAULTS.classes);
   });
