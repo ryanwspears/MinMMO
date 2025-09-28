@@ -3,6 +3,10 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "baseUrl": "./",
+    "paths": {
+      "@game-config/*": ["../packages/game-config/src/*"]
+    },
     "types": ["node"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

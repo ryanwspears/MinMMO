@@ -1,19 +1,25 @@
-import { describe, it, beforeEach, expect } from 'vitest';
+import { describe, it, beforeEach, afterEach, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { AdminPortal } from '@cms/AdminPortal';
 import { load } from '@config/store';
+import { useConfigApiMock, restoreConfigApiMock } from './helpers/configApiMock';
 
 describe('AdminPortal', () => {
-  beforeEach(() => {
-    localStorage.clear();
+  beforeEach(async () => {
+    useConfigApiMock();
+    await load({ force: true });
   });
 
-  it('renders the admin portal header', () => {
+  afterEach(() => {
+    restoreConfigApiMock();
+  });
+
+  it('renders the admin portal header', async () => {
     render(<AdminPortal />);
-    expect(screen.getByText(/MinMMO Admin CMS/i)).toBeDefined();
-    const saveButton = screen.getByRole('button', { name: /^save$/i }) as HTMLButtonElement;
+    expect(await screen.findByText(/MinMMO Admin CMS/i)).toBeDefined();
+    const saveButton = (await screen.findByRole('button', { name: /^save$/i })) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(false);
   });
 
@@ -21,7 +27,7 @@ describe('AdminPortal', () => {
     const user = userEvent.setup();
     render(<AdminPortal />);
 
-    await user.click(screen.getByRole('button', { name: /add skill/i }));
+    await user.click(await screen.findByRole('button', { name: /add skill/i }));
     const [skillButton] = await screen.findAllByRole('button', { name: /^New Skill\b/i });
     await user.click(skillButton);
     const idInput = await screen.findByLabelText('Skill ID');
@@ -38,9 +44,10 @@ describe('AdminPortal', () => {
     await user.clear(amountInput);
     await user.type(amountInput, '25');
 
-    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
+    await screen.findByText(/Configuration saved/i);
 
-    const cfg = load();
+    const cfg = await load();
     expect(cfg.skills.fireball).toBeDefined();
     expect(cfg.skills.fireball.name).toBe('Fireball');
     expect(cfg.skills.fireball.effects[0]?.amount).toBe(25);
@@ -50,7 +57,7 @@ describe('AdminPortal', () => {
     const user = userEvent.setup();
     render(<AdminPortal />);
 
-    await user.click(screen.getByRole('button', { name: /add skill/i }));
+    await user.click(await screen.findByRole('button', { name: /add skill/i }));
     const [skillButton] = await screen.findAllByRole('button', { name: /^New Skill\b/i });
     await user.click(skillButton);
     const idInput = await screen.findByLabelText('Skill ID');
@@ -59,7 +66,7 @@ describe('AdminPortal', () => {
     const [again] = await screen.findAllByRole('button', { name: /^New Skill\b/i });
     await user.click(again);
     expect(await screen.findByText(/ID is required/i)).toBeDefined();
-    const saveButton = screen.getByRole('button', { name: /^save$/i }) as HTMLButtonElement;
+    const saveButton = (await screen.findByRole('button', { name: /^save$/i })) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(true);
   });
 
@@ -67,8 +74,8 @@ describe('AdminPortal', () => {
     const user = userEvent.setup();
     render(<AdminPortal />);
 
-    await user.click(screen.getByRole('button', { name: /classes/i }));
-    await user.click(screen.getByRole('button', { name: /add class/i }));
+    await user.click(await screen.findByRole('button', { name: /classes/i }));
+    await user.click(await screen.findByRole('button', { name: /add class/i }));
 
     const [classButton] = await screen.findAllByRole('button', { name: /new-class/i });
     await user.click(classButton);
@@ -92,9 +99,10 @@ describe('AdminPortal', () => {
     await user.clear(startItemQty);
     await user.type(startItemQty, '2');
 
-    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
+    await screen.findByText(/Configuration saved/i);
 
-    const cfg = load();
+    const cfg = await load();
     expect(cfg.classes.warrior).toBeDefined();
     expect(cfg.classes.warrior.maxHp).toBe(40);
     expect(cfg.classSkills.warrior).toEqual(['slash']);
@@ -105,8 +113,8 @@ describe('AdminPortal', () => {
     const user = userEvent.setup();
     render(<AdminPortal />);
 
-    await user.click(screen.getByRole('button', { name: /statuses/i }));
-    await user.click(screen.getByRole('button', { name: /add status/i }));
+    await user.click(await screen.findByRole('button', { name: /statuses/i }));
+    await user.click(await screen.findByRole('button', { name: /add status/i }));
 
     const statusIdInput = await screen.findByLabelText('Status ID');
     await user.clear(statusIdInput);
@@ -124,9 +132,10 @@ describe('AdminPortal', () => {
     const tagInput = screen.getByLabelText('Status Tag 1');
     await user.type(tagInput, 'fire');
 
-    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await user.click(await screen.findByRole('button', { name: /^save$/i }));
+    await screen.findByText(/Configuration saved/i);
 
-    const cfg = load();
+    const cfg = await load();
     expect(cfg.statuses.burning).toBeDefined();
     expect(cfg.statuses.burning.name).toBe('Burning');
     expect(cfg.statuses.burning.maxStacks).toBe(3);

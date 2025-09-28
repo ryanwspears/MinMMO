@@ -15,6 +15,7 @@ export default defineConfig({
       '@engine': r('src/engine'),
       '@game': r('src/game'),
       '@cms': r('src/cms'),
+      '@game-config': r('packages/game-config/src'),
     }
   },
   server: {

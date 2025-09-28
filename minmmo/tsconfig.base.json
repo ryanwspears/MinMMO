@@ -18,8 +18,9 @@
       "@content/*": ["content/*"],
       "@engine/*": ["engine/*"],
       "@game/*": ["game/*"],
-      "@cms/*": ["cms/*"]
+      "@cms/*": ["cms/*"],
+      "@game-config/*": ["../packages/game-config/src/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "vite.config.ts", "vitest.config.ts", "packages/game-config/src"]
 }
