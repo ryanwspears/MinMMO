@@ -820,7 +820,7 @@ export class Overworld extends Phaser.Scene {
     this.scale.off(Phaser.Scale.Events.RESIZE, this.handleScaleResize, this);
 
     if (this.minimapCamera) {
-      this.cameras.remove(this.minimapCamera, true);
+      this.cameras?.remove?.(this.minimapCamera, true);
       this.minimapCamera = undefined;
     }
 
@@ -828,10 +828,10 @@ export class Overworld extends Phaser.Scene {
     this.minimapBackdrop = undefined;
 
     if (this.minimapMarker) {
-      const mainCamera = this.cameras.main as Phaser.Cameras.Scene2D.Camera & {
+      const mainCamera = this.cameras?.main as (Phaser.Cameras.Scene2D.Camera & {
         removeFromRenderList?: (gameObject: Phaser.GameObjects.GameObject) => void;
-      };
-      mainCamera.removeFromRenderList?.(this.minimapMarker);
+      }) | undefined;
+      mainCamera?.removeFromRenderList?.(this.minimapMarker);
       this.minimapMarker.destroy();
       this.minimapMarker = undefined;
     }
