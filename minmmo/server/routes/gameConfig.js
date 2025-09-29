@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db.js';
-import { validateAndRepair } from '@game-config/validate';
+import { validateAndRepair } from '../../packages/game-config/src/validate.js';
 const CONFIG_KEY = 'game';
 const router = Router();
 async function readConfig() {
@@ -41,3 +41,4 @@ router.put('/', async (req, res, next) => {
     }
 });
 export default router;
+

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
-import { validateAndRepair } from '@game-config/validate'
-import type { GameConfig } from '@game-config/schema'
+import { validateAndRepair } from '../../packages/game-config/src/validate.js'
+import type { GameConfig } from '../../packages/game-config/src/schema.js'
 
 const CONFIG_KEY = 'game'
 
@@ -50,3 +50,4 @@ router.put('/', async (req, res, next) => {
 })
 
 export default router
+
