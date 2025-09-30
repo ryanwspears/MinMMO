@@ -238,6 +238,32 @@ h3 {
   font-size: 14px;
 }
 
+.class-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.class-preview__portrait {
+  width: 96px;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #2a3160;
+  background: #0d1124;
+  padding: 4px;
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+}
+
+.class-preview__info {
+  flex: 1 1 160px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .error {
   color: #ff7675;
   font-size: 13px;

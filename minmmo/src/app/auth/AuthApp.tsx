@@ -21,6 +21,8 @@ interface AuthAppProps {
   onLogout(): void;
 }
 
+const KNIGHT_PORTRAIT_SRC = '/assets/Characters/Knight/Knight_Still.png';
+
 type ViewState =
   | 'landing'
   | 'signup'
@@ -149,6 +151,8 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
     }
     return entries;
   }, [config]);
+
+  const selectedClassSummary = useMemo(() => classSummaries.find((clazz) => clazz.id === charClass), [charClass, classSummaries]);
 
   useEffect(() => {
     if (selection.accountId && selection.characterId) {
@@ -359,10 +363,16 @@ export function AuthApp({ selection, isGameRunning, onSelectionChange, onStartGa
             </select>
           </label>
           {charClass && (
-            <div className="small">
-              <strong>Starting Stats:</strong> HP {classSummaries.find((clazz) => clazz.id === charClass)?.stats.maxHp ?? '-'} · STA{' '}
-              {classSummaries.find((clazz) => clazz.id === charClass)?.stats.maxSta ?? '-'} · MP{' '}
-              {classSummaries.find((clazz) => clazz.id === charClass)?.stats.maxMp ?? '-'}
+            <div className="class-preview">
+              {charClass === 'Knight' && (
+                <img className="class-preview__portrait" src={KNIGHT_PORTRAIT_SRC} alt="Knight class portrait" />
+              )}
+              <div className="class-preview__info">
+                <div className="small">
+                  <strong>Starting Stats:</strong> HP {selectedClassSummary?.stats.maxHp ?? '-'} · STA{' '}
+                  {selectedClassSummary?.stats.maxSta ?? '-'} · MP {selectedClassSummary?.stats.maxMp ?? '-'}
+                </div>
+              </div>
             </div>
           )}
           {charError && <div className="error">{charError}</div>}
