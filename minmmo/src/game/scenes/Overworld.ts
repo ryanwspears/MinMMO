@@ -721,7 +721,9 @@ export class Overworld extends Phaser.Scene {
     const profile = getActiveProfile();
 
     if (profile?.clazz === "Knight") {
-      const display = this.add.sprite(spawn.x, spawn.y, KNIGHT_STILL_KEY, 0);
+      this.playerFacing = "south";
+      const textureKey = this.resolveKnightTextureKey(this.playerFacing) ?? KNIGHT_WALK_SOUTH_KEY;
+      const display = this.add.sprite(spawn.x, spawn.y, textureKey, 0);
       display.setDepth(PLAYER_DEPTH);
       display.setOrigin(0.5, 0.75);
       const player = this.matter.add.gameObject(display, {
@@ -737,7 +739,6 @@ export class Overworld extends Phaser.Scene {
       player.setIgnoreGravity(true);
       this.player = player;
       this.isKnightPlayer = true;
-      this.playerFacing = "south";
       this.setKnightIdleFrame();
     } else {
       const player = this.matter.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY, undefined, {
@@ -919,7 +920,8 @@ export class Overworld extends Phaser.Scene {
       return;
     }
     this.player.anims.stop();
-    this.player.setTexture(KNIGHT_STILL_KEY, 0);
+    const textureKey = this.resolveKnightTextureKey(this.playerFacing) ?? KNIGHT_WALK_SOUTH_KEY;
+    this.player.setTexture(textureKey, 0);
   }
 
   private updateKnightAnimation(moveX: number, moveY: number) {
@@ -956,6 +958,21 @@ export class Overworld extends Phaser.Scene {
         return KNIGHT_ANIM_WALK_EAST;
       case "west":
         return KNIGHT_ANIM_WALK_WEST;
+      default:
+        return undefined;
+    }
+  }
+
+  private resolveKnightTextureKey(direction: "north" | "south" | "east" | "west") {
+    switch (direction) {
+      case "north":
+        return KNIGHT_WALK_NORTH_KEY;
+      case "south":
+        return KNIGHT_WALK_SOUTH_KEY;
+      case "east":
+        return KNIGHT_WALK_EAST_KEY;
+      case "west":
+        return KNIGHT_WALK_WEST_KEY;
       default:
         return undefined;
     }
