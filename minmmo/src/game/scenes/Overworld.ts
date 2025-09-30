@@ -43,6 +43,15 @@ const COLLISION_LAYER_DEPTH_OVERRIDES: Partial<Record<string, number>> = {
 };
 
 const PLAYER_TEXTURE_KEY = "overworld-player";
+const KNIGHT_STILL_KEY = "knight-still";
+const KNIGHT_WALK_NORTH_KEY = "knight-walk-north";
+const KNIGHT_WALK_SOUTH_KEY = "knight-walk-south";
+const KNIGHT_WALK_EAST_KEY = "knight-walk-east";
+const KNIGHT_WALK_WEST_KEY = "knight-walk-west";
+const KNIGHT_ANIM_WALK_NORTH = "knight-walk-cycle-north";
+const KNIGHT_ANIM_WALK_SOUTH = "knight-walk-cycle-south";
+const KNIGHT_ANIM_WALK_EAST = "knight-walk-cycle-east";
+const KNIGHT_ANIM_WALK_WEST = "knight-walk-cycle-west";
 const PLAYER_SPEED = 2;
 const CAMERA_ZOOM = 2;
 
@@ -154,6 +163,8 @@ export class Overworld extends Phaser.Scene {
   private initData?: OverworldInitData;
   private pauseKey?: Phaser.Input.Keyboard.Key;
   private isPaused = false;
+  private isKnightPlayer = false;
+  private playerFacing: "north" | "south" | "east" | "west" = "south";
 
   constructor() {
     super("Overworld");
@@ -166,6 +177,46 @@ export class Overworld extends Phaser.Scene {
   preload() {
     this.load.tilemapTiledJSON(MAP_KEY, MAP_JSON_PATH);
     this.load.image(TILESET_KEY, TILESET_IMAGE_PATH);
+    this.load.spritesheet(KNIGHT_STILL_KEY, "assets/Characters/Knight/Knight_Still.png", {
+      frameWidth: 64,
+      frameHeight: 64,
+    });
+    this.load.spritesheet(
+      KNIGHT_WALK_NORTH_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_Back.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_SOUTH_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_Front.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_WEST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_Left.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_EAST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_Right.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
   }
 
   create() {
@@ -185,6 +236,7 @@ export class Overworld extends Phaser.Scene {
     }
 
     this.ensureGeneratedTextures();
+    this.createKnightAnimations();
     this.buildMap();
     this.spawnPlayer();
     this.initializeEncounterSystem();
@@ -666,19 +718,43 @@ export class Overworld extends Phaser.Scene {
 
   private spawnPlayer() {
     const spawn = this.determineSpawnPoint();
-    const player = this.matter.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY, undefined, {
-      frictionAir: 0.02,
-      ignoreGravity: true,
-      label: "player",
-    });
-    player.setDepth(PLAYER_DEPTH);
-    player.setCircle(10);
-    player.setFixedRotation();
-    player.setFriction(0, 0, 0);
-    player.setFrictionAir(0.02);
-    player.setBounce(0);
-    player.setIgnoreGravity(true);
-    this.player = player;
+    const profile = getActiveProfile();
+
+    if (profile?.clazz === "Knight") {
+      const display = this.add.sprite(spawn.x, spawn.y, KNIGHT_STILL_KEY, 0);
+      display.setDepth(PLAYER_DEPTH);
+      display.setOrigin(0.5, 0.75);
+      const player = this.matter.add.gameObject(display, {
+        frictionAir: 0.02,
+        ignoreGravity: true,
+        label: "player",
+      }) as Phaser.Physics.Matter.Sprite;
+      player.setRectangle(28, 40);
+      player.setFixedRotation();
+      player.setFriction(0, 0, 0);
+      player.setFrictionAir(0.02);
+      player.setBounce(0);
+      player.setIgnoreGravity(true);
+      this.player = player;
+      this.isKnightPlayer = true;
+      this.playerFacing = "south";
+      this.setKnightIdleFrame();
+    } else {
+      const player = this.matter.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY, undefined, {
+        frictionAir: 0.02,
+        ignoreGravity: true,
+        label: "player",
+      });
+      player.setDepth(PLAYER_DEPTH);
+      player.setCircle(10);
+      player.setFixedRotation();
+      player.setFriction(0, 0, 0);
+      player.setFrictionAir(0.02);
+      player.setBounce(0);
+      player.setIgnoreGravity(true);
+      this.player = player;
+      this.isKnightPlayer = false;
+    }
 
     const keyboard = this.input.keyboard;
     if (keyboard) {
@@ -801,6 +877,9 @@ export class Overworld extends Phaser.Scene {
 
     if (!moveX && !moveY) {
       this.player.setVelocity(0, 0);
+      if (this.isKnightPlayer) {
+        this.setKnightIdleFrame();
+      }
       return;
     }
 
@@ -809,6 +888,77 @@ export class Overworld extends Phaser.Scene {
     const vy = (moveY / length) * PLAYER_SPEED;
 
     this.player.setVelocity(vx, vy);
+    if (this.isKnightPlayer) {
+      this.updateKnightAnimation(moveX, moveY);
+    }
+  }
+
+  private createKnightAnimations() {
+    const animations: Array<{ key: string; sheet: string }> = [
+      { key: KNIGHT_ANIM_WALK_NORTH, sheet: KNIGHT_WALK_NORTH_KEY },
+      { key: KNIGHT_ANIM_WALK_SOUTH, sheet: KNIGHT_WALK_SOUTH_KEY },
+      { key: KNIGHT_ANIM_WALK_EAST, sheet: KNIGHT_WALK_EAST_KEY },
+      { key: KNIGHT_ANIM_WALK_WEST, sheet: KNIGHT_WALK_WEST_KEY },
+    ];
+
+    for (const config of animations) {
+      if (this.anims.exists(config.key)) {
+        continue;
+      }
+      this.anims.create({
+        key: config.key,
+        frames: this.anims.generateFrameNumbers(config.sheet, { start: 0, end: 3 }),
+        frameRate: 8,
+        repeat: -1,
+      });
+    }
+  }
+
+  private setKnightIdleFrame() {
+    if (!this.player) {
+      return;
+    }
+    this.player.anims.stop();
+    this.player.setTexture(KNIGHT_STILL_KEY, 0);
+  }
+
+  private updateKnightAnimation(moveX: number, moveY: number) {
+    if (!this.player) {
+      return;
+    }
+
+    const absX = Math.abs(moveX);
+    const absY = Math.abs(moveY);
+    let facing: "north" | "south" | "east" | "west" = this.playerFacing;
+
+    if (absY >= absX) {
+      facing = moveY < 0 ? "north" : "south";
+    } else {
+      facing = moveX < 0 ? "west" : "east";
+    }
+
+    if (this.playerFacing !== facing || !this.player.anims.isPlaying) {
+      this.playerFacing = facing;
+      const animKey = this.resolveKnightAnimationKey(facing);
+      if (animKey) {
+        this.player.anims.play(animKey, true);
+      }
+    }
+  }
+
+  private resolveKnightAnimationKey(direction: "north" | "south" | "east" | "west") {
+    switch (direction) {
+      case "north":
+        return KNIGHT_ANIM_WALK_NORTH;
+      case "south":
+        return KNIGHT_ANIM_WALK_SOUTH;
+      case "east":
+        return KNIGHT_ANIM_WALK_EAST;
+      case "west":
+        return KNIGHT_ANIM_WALK_WEST;
+      default:
+        return undefined;
+    }
   }
 
 
