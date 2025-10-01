@@ -48,10 +48,18 @@ const KNIGHT_WALK_NORTH_KEY = "knight-walk-north";
 const KNIGHT_WALK_SOUTH_KEY = "knight-walk-south";
 const KNIGHT_WALK_EAST_KEY = "knight-walk-east";
 const KNIGHT_WALK_WEST_KEY = "knight-walk-west";
+const KNIGHT_WALK_NORTH_EAST_KEY = "knight-walk-north-east";
+const KNIGHT_WALK_NORTH_WEST_KEY = "knight-walk-north-west";
+const KNIGHT_WALK_SOUTH_EAST_KEY = "knight-walk-south-east";
+const KNIGHT_WALK_SOUTH_WEST_KEY = "knight-walk-south-west";
 const KNIGHT_ANIM_WALK_NORTH = "knight-walk-cycle-north";
 const KNIGHT_ANIM_WALK_SOUTH = "knight-walk-cycle-south";
 const KNIGHT_ANIM_WALK_EAST = "knight-walk-cycle-east";
 const KNIGHT_ANIM_WALK_WEST = "knight-walk-cycle-west";
+const KNIGHT_ANIM_WALK_NORTH_EAST = "knight-walk-cycle-north-east";
+const KNIGHT_ANIM_WALK_NORTH_WEST = "knight-walk-cycle-north-west";
+const KNIGHT_ANIM_WALK_SOUTH_EAST = "knight-walk-cycle-south-east";
+const KNIGHT_ANIM_WALK_SOUTH_WEST = "knight-walk-cycle-south-west";
 const PLAYER_SPEED = 2;
 const CAMERA_ZOOM = 2;
 
@@ -69,6 +77,16 @@ const MINIMAP_CITY_MARKER_DEPTH = 1500;
 const MINIMAP_PLAYER_INDICATOR_DEPTH = MINIMAP_CITY_MARKER_DEPTH + 10;
 
 type EncounterKind = "common" | "wraith" | "ogre";
+
+type KnightFacing =
+  | "north"
+  | "south"
+  | "east"
+  | "west"
+  | "northEast"
+  | "northWest"
+  | "southEast"
+  | "southWest";
 
 interface EncounterConfig {
   textureKey: string;
@@ -164,7 +182,7 @@ export class Overworld extends Phaser.Scene {
   private pauseKey?: Phaser.Input.Keyboard.Key;
   private isPaused = false;
   private isKnightPlayer = false;
-  private playerFacing: "north" | "south" | "east" | "west" = "south";
+  private playerFacing: KnightFacing = "south";
 
   constructor() {
     super("Overworld");
@@ -200,6 +218,24 @@ export class Overworld extends Phaser.Scene {
       },
     );
     this.load.spritesheet(
+      KNIGHT_WALK_NORTH_EAST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_BackRight.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_NORTH_WEST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_BackLeft.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
       KNIGHT_WALK_WEST_KEY,
       "assets/Characters/Knight/Animations/Walk/Walk_Left.png",
       {
@@ -211,6 +247,24 @@ export class Overworld extends Phaser.Scene {
     this.load.spritesheet(
       KNIGHT_WALK_EAST_KEY,
       "assets/Characters/Knight/Animations/Walk/Walk_Right.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_SOUTH_EAST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_FrontRight.png",
+      {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      },
+    );
+    this.load.spritesheet(
+      KNIGHT_WALK_SOUTH_WEST_KEY,
+      "assets/Characters/Knight/Animations/Walk/Walk_FrontLeft.png",
       {
         frameWidth: 64,
         frameHeight: 64,
@@ -900,6 +954,10 @@ export class Overworld extends Phaser.Scene {
       { key: KNIGHT_ANIM_WALK_SOUTH, sheet: KNIGHT_WALK_SOUTH_KEY },
       { key: KNIGHT_ANIM_WALK_EAST, sheet: KNIGHT_WALK_EAST_KEY },
       { key: KNIGHT_ANIM_WALK_WEST, sheet: KNIGHT_WALK_WEST_KEY },
+      { key: KNIGHT_ANIM_WALK_NORTH_EAST, sheet: KNIGHT_WALK_NORTH_EAST_KEY },
+      { key: KNIGHT_ANIM_WALK_NORTH_WEST, sheet: KNIGHT_WALK_NORTH_WEST_KEY },
+      { key: KNIGHT_ANIM_WALK_SOUTH_EAST, sheet: KNIGHT_WALK_SOUTH_EAST_KEY },
+      { key: KNIGHT_ANIM_WALK_SOUTH_WEST, sheet: KNIGHT_WALK_SOUTH_WEST_KEY },
     ];
 
     for (const config of animations) {
@@ -931,9 +989,15 @@ export class Overworld extends Phaser.Scene {
 
     const absX = Math.abs(moveX);
     const absY = Math.abs(moveY);
-    let facing: "north" | "south" | "east" | "west" = this.playerFacing;
+    let facing: KnightFacing = this.playerFacing;
 
-    if (absY >= absX) {
+    if (moveX !== 0 && moveY !== 0) {
+      if (moveY < 0) {
+        facing = moveX > 0 ? "northEast" : "northWest";
+      } else {
+        facing = moveX > 0 ? "southEast" : "southWest";
+      }
+    } else if (absY >= absX) {
       facing = moveY < 0 ? "north" : "south";
     } else {
       facing = moveX < 0 ? "west" : "east";
@@ -948,7 +1012,7 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  private resolveKnightAnimationKey(direction: "north" | "south" | "east" | "west") {
+  private resolveKnightAnimationKey(direction: KnightFacing) {
     switch (direction) {
       case "north":
         return KNIGHT_ANIM_WALK_NORTH;
@@ -958,12 +1022,20 @@ export class Overworld extends Phaser.Scene {
         return KNIGHT_ANIM_WALK_EAST;
       case "west":
         return KNIGHT_ANIM_WALK_WEST;
+      case "northEast":
+        return KNIGHT_ANIM_WALK_NORTH_EAST;
+      case "northWest":
+        return KNIGHT_ANIM_WALK_NORTH_WEST;
+      case "southEast":
+        return KNIGHT_ANIM_WALK_SOUTH_EAST;
+      case "southWest":
+        return KNIGHT_ANIM_WALK_SOUTH_WEST;
       default:
         return undefined;
     }
   }
 
-  private resolveKnightTextureKey(direction: "north" | "south" | "east" | "west") {
+  private resolveKnightTextureKey(direction: KnightFacing) {
     switch (direction) {
       case "north":
         return KNIGHT_WALK_NORTH_KEY;
@@ -973,6 +1045,14 @@ export class Overworld extends Phaser.Scene {
         return KNIGHT_WALK_EAST_KEY;
       case "west":
         return KNIGHT_WALK_WEST_KEY;
+      case "northEast":
+        return KNIGHT_WALK_NORTH_EAST_KEY;
+      case "northWest":
+        return KNIGHT_WALK_NORTH_WEST_KEY;
+      case "southEast":
+        return KNIGHT_WALK_SOUTH_EAST_KEY;
+      case "southWest":
+        return KNIGHT_WALK_SOUTH_WEST_KEY;
       default:
         return undefined;
     }
