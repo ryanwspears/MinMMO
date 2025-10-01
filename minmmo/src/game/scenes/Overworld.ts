@@ -126,6 +126,9 @@ interface SpawnZoneInstance {
   zone: SpawnZone;
   sensor: Phaser.Physics.Matter.Sprite;
   display: Phaser.GameObjects.Sprite;
+  wanderTarget?: Phaser.Math.Vector2;
+  wanderTween?: Phaser.Tweens.Tween;
+  wanderTimer?: Phaser.Time.TimerEvent;
 }
 
 const ENCOUNTER_LAYER_MAP: Record<string, EncounterKind> = {
@@ -165,6 +168,10 @@ const ENCOUNTER_CONFIGS: Record<EncounterKind, EncounterConfig> = {
 };
 
 const ENCOUNTER_DEPTH = PLAYER_DEPTH - 5;
+const ENCOUNTER_WANDER_SPEED = 24;
+const ENCOUNTER_WANDER_MIN_DELAY = 400;
+const ENCOUNTER_WANDER_MAX_DELAY = 1400;
+const ENCOUNTER_WANDER_MIN_DURATION = 250;
 
 type WASDKeys = Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
@@ -574,7 +581,9 @@ export class Overworld extends Phaser.Scene {
         this.indexZoneBody(body, zone);
       }
 
-      this.spawnZoneInstances.set(zone.id, { zone, sensor, display });
+      const instance: SpawnZoneInstance = { zone, sensor, display };
+      this.spawnZoneInstances.set(zone.id, instance);
+      this.scheduleSpawnZoneWander(instance);
     }
   }
 
@@ -600,7 +609,9 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
-    for (const { sensor, display } of this.spawnZoneInstances.values()) {
+    for (const instance of this.spawnZoneInstances.values()) {
+      this.stopSpawnZoneWander(instance);
+      const { sensor, display } = instance;
       const body = sensor.body as MatterJS.BodyType | null;
       if (body) {
         this.unindexZoneBody(body);
@@ -650,6 +661,118 @@ export class Overworld extends Phaser.Scene {
 
     const centroidFallback = this.computePolygonCentroid(polygon);
     return point.set(centroidFallback.x, centroidFallback.y);
+  }
+
+  private scheduleSpawnZoneWander(instance: SpawnZoneInstance) {
+    if (instance.wanderTimer) {
+      instance.wanderTimer.remove(false);
+      instance.wanderTimer = undefined;
+    }
+
+    const current = new Phaser.Math.Vector2(instance.display.x, instance.display.y);
+    const target = this.getNextWanderTarget(instance.zone.polygon, current);
+
+    if (!target) {
+      instance.wanderTarget = undefined;
+      return;
+    }
+
+    const distance = Phaser.Math.Distance.Between(current.x, current.y, target.x, target.y);
+
+    if (distance < 2) {
+      const delay = Phaser.Math.Between(ENCOUNTER_WANDER_MIN_DELAY, ENCOUNTER_WANDER_MAX_DELAY);
+      instance.wanderTimer = this.time.delayedCall(delay, () => {
+        if (!this.spawnZoneInstances.has(instance.zone.id)) {
+          return;
+        }
+        instance.wanderTimer = undefined;
+        this.scheduleSpawnZoneWander(instance);
+      });
+      return;
+    }
+
+    instance.wanderTarget = target.clone();
+    const duration = Math.max((distance / ENCOUNTER_WANDER_SPEED) * 1000, ENCOUNTER_WANDER_MIN_DURATION);
+    instance.wanderTween = this.tweens.add({
+      targets: instance.display,
+      x: target.x,
+      y: target.y,
+      duration,
+      onComplete: () => {
+        instance.wanderTween = undefined;
+        if (!this.spawnZoneInstances.has(instance.zone.id)) {
+          return;
+        }
+        const delay = Phaser.Math.Between(ENCOUNTER_WANDER_MIN_DELAY, ENCOUNTER_WANDER_MAX_DELAY);
+        instance.wanderTimer = this.time.delayedCall(delay, () => {
+          if (!this.spawnZoneInstances.has(instance.zone.id)) {
+            return;
+          }
+          instance.wanderTimer = undefined;
+          this.scheduleSpawnZoneWander(instance);
+        });
+      },
+    });
+  }
+
+  private stopSpawnZoneWander(instance: SpawnZoneInstance) {
+    if (instance.wanderTween) {
+      instance.wanderTween.stop();
+      this.tweens.remove(instance.wanderTween);
+      instance.wanderTween = undefined;
+    }
+
+    if (instance.wanderTimer) {
+      instance.wanderTimer.remove(false);
+      instance.wanderTimer = undefined;
+    }
+
+    instance.wanderTarget = undefined;
+  }
+
+  private getNextWanderTarget(
+    polygon: Phaser.Geom.Polygon,
+    origin: Phaser.Math.Vector2,
+  ): Phaser.Math.Vector2 | undefined {
+    const target = new Phaser.Math.Vector2();
+
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const candidate = this.getRandomPointInPolygon(polygon);
+      if (this.segmentWithinPolygon(origin, candidate, polygon)) {
+        return target.set(candidate.x, candidate.y);
+      }
+    }
+
+    const centroid = this.computePolygonCentroid(polygon);
+    if (this.segmentWithinPolygon(origin, centroid, polygon)) {
+      return target.set(centroid.x, centroid.y);
+    }
+
+    if (polygon.contains(origin.x, origin.y)) {
+      return target.set(origin.x, origin.y);
+    }
+
+    return undefined;
+  }
+
+  private segmentWithinPolygon(
+    start: Phaser.Math.Vector2,
+    end: Phaser.Math.Vector2,
+    polygon: Phaser.Geom.Polygon,
+  ): boolean {
+    const distance = Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y);
+    const steps = Math.max(2, Math.ceil(distance / 8));
+
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      const x = Phaser.Math.Linear(start.x, end.x, t);
+      const y = Phaser.Math.Linear(start.y, end.y, t);
+      if (!polygon.contains(x, y)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private computePolygonCentroid(polygon: Phaser.Geom.Polygon): Phaser.Math.Vector2 {
@@ -803,6 +926,7 @@ export class Overworld extends Phaser.Scene {
       this.unindexZoneBody(body);
     }
 
+    this.stopSpawnZoneWander(instance);
     instance.sensor.destroy();
     instance.display.destroy();
     this.spawnZoneInstances.delete(zone.id);
