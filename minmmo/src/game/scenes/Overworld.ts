@@ -52,6 +52,15 @@ const KNIGHT_WALK_NORTH_EAST_KEY = "knight-walk-north-east";
 const KNIGHT_WALK_NORTH_WEST_KEY = "knight-walk-north-west";
 const KNIGHT_WALK_SOUTH_EAST_KEY = "knight-walk-south-east";
 const KNIGHT_WALK_SOUTH_WEST_KEY = "knight-walk-south-west";
+const SLIME_STILL_KEY = "slime-still";
+const SLIME_SLIDE_NORTH_KEY = "slime-slide-north";
+const SLIME_SLIDE_SOUTH_KEY = "slime-slide-south";
+const SLIME_SLIDE_EAST_KEY = "slime-slide-east";
+const SLIME_SLIDE_WEST_KEY = "slime-slide-west";
+const SLIME_SLIDE_NORTH_EAST_KEY = "slime-slide-north-east";
+const SLIME_SLIDE_NORTH_WEST_KEY = "slime-slide-north-west";
+const SLIME_SLIDE_SOUTH_EAST_KEY = "slime-slide-south-east";
+const SLIME_SLIDE_SOUTH_WEST_KEY = "slime-slide-south-west";
 const KNIGHT_ANIM_WALK_NORTH = "knight-walk-cycle-north";
 const KNIGHT_ANIM_WALK_SOUTH = "knight-walk-cycle-south";
 const KNIGHT_ANIM_WALK_EAST = "knight-walk-cycle-east";
@@ -60,6 +69,15 @@ const KNIGHT_ANIM_WALK_NORTH_EAST = "knight-walk-cycle-north-east";
 const KNIGHT_ANIM_WALK_NORTH_WEST = "knight-walk-cycle-north-west";
 const KNIGHT_ANIM_WALK_SOUTH_EAST = "knight-walk-cycle-south-east";
 const KNIGHT_ANIM_WALK_SOUTH_WEST = "knight-walk-cycle-south-west";
+const SLIME_ANIM_IDLE = "slime-idle";
+const SLIME_ANIM_SLIDE_NORTH = "slime-slide-cycle-north";
+const SLIME_ANIM_SLIDE_SOUTH = "slime-slide-cycle-south";
+const SLIME_ANIM_SLIDE_EAST = "slime-slide-cycle-east";
+const SLIME_ANIM_SLIDE_WEST = "slime-slide-cycle-west";
+const SLIME_ANIM_SLIDE_NORTH_EAST = "slime-slide-cycle-north-east";
+const SLIME_ANIM_SLIDE_NORTH_WEST = "slime-slide-cycle-north-west";
+const SLIME_ANIM_SLIDE_SOUTH_EAST = "slime-slide-cycle-south-east";
+const SLIME_ANIM_SLIDE_SOUTH_WEST = "slime-slide-cycle-south-west";
 const PLAYER_SPEED = 2;
 const CAMERA_ZOOM = 2;
 
@@ -106,7 +124,8 @@ interface SpawnZone {
 
 interface SpawnZoneInstance {
   zone: SpawnZone;
-  sprite: Phaser.Physics.Matter.Sprite;
+  sensor: Phaser.Physics.Matter.Sprite;
+  display: Phaser.GameObjects.Sprite;
 }
 
 const ENCOUNTER_LAYER_MAP: Record<string, EncounterKind> = {
@@ -271,6 +290,39 @@ export class Overworld extends Phaser.Scene {
         endFrame: 3,
       },
     );
+
+    this.load.image(SLIME_STILL_KEY, "assets/Characters/Slime/Slime_Still.png");
+
+    const slimeSheets: Array<{ key: string; path: string }> = [
+      { key: SLIME_SLIDE_NORTH_KEY, path: "assets/Characters/Slime/Animations/Slide/Slide_Back.png" },
+      { key: SLIME_SLIDE_SOUTH_KEY, path: "assets/Characters/Slime/Animations/Slide/Slide_Front.png" },
+      { key: SLIME_SLIDE_EAST_KEY, path: "assets/Characters/Slime/Animations/Slide/Slide_Right.png" },
+      { key: SLIME_SLIDE_WEST_KEY, path: "assets/Characters/Slime/Animations/Slide/Slide_Left.png" },
+      {
+        key: SLIME_SLIDE_NORTH_EAST_KEY,
+        path: "assets/Characters/Slime/Animations/Slide/Slide_BackRight.png",
+      },
+      {
+        key: SLIME_SLIDE_NORTH_WEST_KEY,
+        path: "assets/Characters/Slime/Animations/Slide/Slide_BackLeft.png",
+      },
+      {
+        key: SLIME_SLIDE_SOUTH_EAST_KEY,
+        path: "assets/Characters/Slime/Animations/Slide/Slide_FrontRight.png",
+      },
+      {
+        key: SLIME_SLIDE_SOUTH_WEST_KEY,
+        path: "assets/Characters/Slime/Animations/Slide/Slide_FrontLeft.png",
+      },
+    ];
+
+    for (const sheet of slimeSheets) {
+      this.load.spritesheet(sheet.key, sheet.path, {
+        frameWidth: 64,
+        frameHeight: 64,
+        endFrame: 3,
+      });
+    }
   }
 
   create() {
@@ -291,6 +343,7 @@ export class Overworld extends Phaser.Scene {
 
     this.ensureGeneratedTextures();
     this.createKnightAnimations();
+    this.createSlimeAnimations();
     this.buildMap();
     this.spawnPlayer();
     this.initializeEncounterSystem();
@@ -496,26 +549,32 @@ export class Overworld extends Phaser.Scene {
       }
 
       const point = this.getRandomPointInPolygon(zone.polygon);
-      const sprite = this.matter.add.sprite(point.x, point.y, config.textureKey, undefined, {
+      const sensor = this.matter.add.sprite(point.x, point.y, config.textureKey, undefined, {
         isSensor: true,
         isStatic: true,
         label: config.label,
         ignoreGravity: true,
       });
 
-      sprite.setDepth(ENCOUNTER_DEPTH);
-      sprite.setCircle(config.radius);
-      sprite.setStatic(true);
-      sprite.setIgnoreGravity(true);
-      sprite.setAlpha(0.9);
-      sprite.setData("encounterZone", zone.id);
+      sensor.setDepth(ENCOUNTER_DEPTH);
+      sensor.setCircle(config.radius);
+      sensor.setStatic(true);
+      sensor.setIgnoreGravity(true);
+      sensor.setAlpha(0);
+      sensor.setVisible(false);
+      sensor.setData("encounterZone", zone.id);
 
-      const body = sprite.body as MatterJS.BodyType | null;
+      const display = this.add.sprite(point.x, point.y, SLIME_STILL_KEY, 0);
+      display.setDepth(ENCOUNTER_DEPTH);
+      display.setOrigin(0.5, 0.75);
+      display.play(SLIME_ANIM_IDLE);
+
+      const body = sensor.body as MatterJS.BodyType | null;
       if (body) {
         this.indexZoneBody(body, zone);
       }
 
-      this.spawnZoneInstances.set(zone.id, { zone, sprite });
+      this.spawnZoneInstances.set(zone.id, { zone, sensor, display });
     }
   }
 
@@ -541,12 +600,13 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
-    for (const { sprite } of this.spawnZoneInstances.values()) {
-      const body = sprite.body as MatterJS.BodyType | null;
+    for (const { sensor, display } of this.spawnZoneInstances.values()) {
+      const body = sensor.body as MatterJS.BodyType | null;
       if (body) {
         this.unindexZoneBody(body);
       }
-      sprite.destroy();
+      sensor.destroy();
+      display.destroy();
     }
 
     this.spawnZoneInstances.clear();
@@ -738,12 +798,13 @@ export class Overworld extends Phaser.Scene {
       return;
     }
 
-    const body = instance.sprite.body as MatterJS.BodyType | null;
+    const body = instance.sensor.body as MatterJS.BodyType | null;
     if (body) {
       this.unindexZoneBody(body);
     }
 
-    instance.sprite.destroy();
+    instance.sensor.destroy();
+    instance.display.destroy();
     this.spawnZoneInstances.delete(zone.id);
   }
 
@@ -945,6 +1006,40 @@ export class Overworld extends Phaser.Scene {
     this.player.setVelocity(vx, vy);
     if (this.isKnightPlayer) {
       this.updateKnightAnimation(moveX, moveY);
+    }
+  }
+
+  private createSlimeAnimations() {
+    if (!this.anims.exists(SLIME_ANIM_IDLE)) {
+      this.anims.create({
+        key: SLIME_ANIM_IDLE,
+        frames: [{ key: SLIME_STILL_KEY }],
+        frameRate: 1,
+        repeat: -1,
+      });
+    }
+
+    const animations: Array<{ key: string; sheet: string }> = [
+      { key: SLIME_ANIM_SLIDE_NORTH, sheet: SLIME_SLIDE_NORTH_KEY },
+      { key: SLIME_ANIM_SLIDE_SOUTH, sheet: SLIME_SLIDE_SOUTH_KEY },
+      { key: SLIME_ANIM_SLIDE_EAST, sheet: SLIME_SLIDE_EAST_KEY },
+      { key: SLIME_ANIM_SLIDE_WEST, sheet: SLIME_SLIDE_WEST_KEY },
+      { key: SLIME_ANIM_SLIDE_NORTH_EAST, sheet: SLIME_SLIDE_NORTH_EAST_KEY },
+      { key: SLIME_ANIM_SLIDE_NORTH_WEST, sheet: SLIME_SLIDE_NORTH_WEST_KEY },
+      { key: SLIME_ANIM_SLIDE_SOUTH_EAST, sheet: SLIME_SLIDE_SOUTH_EAST_KEY },
+      { key: SLIME_ANIM_SLIDE_SOUTH_WEST, sheet: SLIME_SLIDE_SOUTH_WEST_KEY },
+    ];
+
+    for (const config of animations) {
+      if (this.anims.exists(config.key)) {
+        continue;
+      }
+      this.anims.create({
+        key: config.key,
+        frames: this.anims.generateFrameNumbers(config.sheet, { start: 0, end: 3 }),
+        frameRate: 8,
+        repeat: -1,
+      });
     }
   }
 
