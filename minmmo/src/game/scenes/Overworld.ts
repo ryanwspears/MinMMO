@@ -106,6 +106,8 @@ type KnightFacing =
   | "southEast"
   | "southWest";
 
+type SlimeFacing = KnightFacing;
+
 interface EncounterConfig {
   textureKey: string;
   label: string;
@@ -129,6 +131,7 @@ interface SpawnZoneInstance {
   wanderTarget?: Phaser.Math.Vector2;
   wanderTween?: Phaser.Tweens.Tween;
   wanderTimer?: Phaser.Time.TimerEvent;
+  facing?: SlimeFacing;
 }
 
 const ENCOUNTER_LAYER_MAP: Record<string, EncounterKind> = {
@@ -574,14 +577,13 @@ export class Overworld extends Phaser.Scene {
       const display = this.add.sprite(point.x, point.y, SLIME_STILL_KEY, 0);
       display.setDepth(ENCOUNTER_DEPTH);
       display.setOrigin(0.5, 0.75);
-      display.play(SLIME_ANIM_IDLE);
-
       const body = sensor.body as MatterJS.BodyType | null;
       if (body) {
         this.indexZoneBody(body, zone);
       }
 
-      const instance: SpawnZoneInstance = { zone, sensor, display };
+      const instance: SpawnZoneInstance = { zone, sensor, display, facing: "south" };
+      this.playSlimeIdle(instance);
       this.spawnZoneInstances.set(zone.id, instance);
       this.scheduleSpawnZoneWander(instance);
     }
@@ -674,12 +676,14 @@ export class Overworld extends Phaser.Scene {
 
     if (!target) {
       instance.wanderTarget = undefined;
+      this.playSlimeIdle(instance);
       return;
     }
 
     const distance = Phaser.Math.Distance.Between(current.x, current.y, target.x, target.y);
 
     if (distance < 2) {
+      this.playSlimeIdle(instance);
       const delay = Phaser.Math.Between(ENCOUNTER_WANDER_MIN_DELAY, ENCOUNTER_WANDER_MAX_DELAY);
       instance.wanderTimer = this.time.delayedCall(delay, () => {
         if (!this.spawnZoneInstances.has(instance.zone.id)) {
@@ -692,6 +696,9 @@ export class Overworld extends Phaser.Scene {
     }
 
     instance.wanderTarget = target.clone();
+    const deltaX = target.x - current.x;
+    const deltaY = target.y - current.y;
+    this.playSlimeDirectionalAnimation(instance, deltaX, deltaY);
     const duration = Math.max((distance / ENCOUNTER_WANDER_SPEED) * 1000, ENCOUNTER_WANDER_MIN_DURATION);
     instance.wanderTween = this.tweens.add({
       targets: instance.display,
@@ -703,6 +710,7 @@ export class Overworld extends Phaser.Scene {
         if (!this.spawnZoneInstances.has(instance.zone.id)) {
           return;
         }
+        this.playSlimeIdle(instance);
         const delay = Phaser.Math.Between(ENCOUNTER_WANDER_MIN_DELAY, ENCOUNTER_WANDER_MAX_DELAY);
         instance.wanderTimer = this.time.delayedCall(delay, () => {
           if (!this.spawnZoneInstances.has(instance.zone.id)) {
@@ -728,6 +736,7 @@ export class Overworld extends Phaser.Scene {
     }
 
     instance.wanderTarget = undefined;
+    this.playSlimeIdle(instance);
   }
 
   private getNextWanderTarget(
@@ -1164,6 +1173,117 @@ export class Overworld extends Phaser.Scene {
         frameRate: 8,
         repeat: -1,
       });
+    }
+  }
+
+  private playSlimeIdle(instance: SpawnZoneInstance) {
+    const sprite = instance.display;
+    if (!sprite || !sprite.scene) {
+      return;
+    }
+    sprite.anims?.stop();
+    const textureKey = this.resolveSlimeTextureKey(instance.facing);
+    if (textureKey) {
+      sprite.setTexture(textureKey, 0);
+      return;
+    }
+    sprite.setTexture(SLIME_STILL_KEY, 0);
+  }
+
+  private playSlimeDirectionalAnimation(instance: SpawnZoneInstance, dx: number, dy: number) {
+    const sprite = instance.display;
+    if (!sprite || !sprite.scene || !sprite.anims) {
+      return;
+    }
+    const facing = this.resolveSlimeFacing(dx, dy, instance.facing);
+    if (!facing) {
+      this.playSlimeIdle(instance);
+      return;
+    }
+    const animKey = this.resolveSlimeAnimationKey(facing);
+    if (!animKey) {
+      instance.facing = facing;
+      this.playSlimeIdle(instance);
+      return;
+    }
+    if (sprite.anims.currentAnim?.key === animKey && sprite.anims.isPlaying) {
+      instance.facing = facing;
+      return;
+    }
+    instance.facing = facing;
+    sprite.anims.play(animKey, true);
+  }
+
+  private resolveSlimeFacing(dx: number, dy: number, fallback?: SlimeFacing): SlimeFacing | undefined {
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const threshold = 0.001;
+
+    if (absX < threshold && absY < threshold) {
+      return fallback;
+    }
+
+    const maxAxis = Math.max(absX, absY);
+    const minAxis = Math.min(absX, absY);
+    const diagonalRatio = maxAxis === 0 ? 0 : minAxis / maxAxis;
+
+    if (diagonalRatio >= 0.45) {
+      if (dy < 0) {
+        return dx > 0 ? "northEast" : "northWest";
+      }
+      return dx > 0 ? "southEast" : "southWest";
+    }
+
+    if (absY >= absX) {
+      return dy < 0 ? "north" : "south";
+    }
+
+    return dx < 0 ? "west" : "east";
+  }
+
+  private resolveSlimeAnimationKey(direction: SlimeFacing | undefined) {
+    switch (direction) {
+      case "north":
+        return SLIME_ANIM_SLIDE_NORTH;
+      case "south":
+        return SLIME_ANIM_SLIDE_SOUTH;
+      case "east":
+        return SLIME_ANIM_SLIDE_EAST;
+      case "west":
+        return SLIME_ANIM_SLIDE_WEST;
+      case "northEast":
+        return SLIME_ANIM_SLIDE_NORTH_EAST;
+      case "northWest":
+        return SLIME_ANIM_SLIDE_NORTH_WEST;
+      case "southEast":
+        return SLIME_ANIM_SLIDE_SOUTH_EAST;
+      case "southWest":
+        return SLIME_ANIM_SLIDE_SOUTH_WEST;
+      default:
+        return undefined;
+    }
+  }
+
+  private resolveSlimeTextureKey(direction: SlimeFacing | undefined) {
+    switch (direction) {
+      case "north":
+        return SLIME_SLIDE_NORTH_KEY;
+      case "south":
+        return SLIME_SLIDE_SOUTH_KEY;
+      case "east":
+        return SLIME_SLIDE_EAST_KEY;
+      case "west":
+        return SLIME_SLIDE_WEST_KEY;
+      case "northEast":
+        return SLIME_SLIDE_NORTH_EAST_KEY;
+      case "northWest":
+        return SLIME_SLIDE_NORTH_WEST_KEY;
+      case "southEast":
+        return SLIME_SLIDE_SOUTH_EAST_KEY;
+      case "southWest":
+        return SLIME_SLIDE_SOUTH_WEST_KEY;
+      default:
+        return undefined;
     }
   }
 
